@@ -48,7 +48,7 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		var err error
-		callback := func(messages []int) {
+		callback := func(messages map[int]bool) {
 			var body map[string]any
 			e := json.Unmarshal(msg.Body, &body)
 			if e != nil {
@@ -56,7 +56,13 @@ func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 				return
 			}
 			body["type"] = "read_ok"
-			body["messages"] = messages
+
+			msgs := make([]int, 0)
+			for k := range messages {
+				msgs = append(msgs, k)
+			}
+
+			body["messages"] = msgs
 			err = node.Reply(msg, body)
 		}
 		state.ReadMessages(callback)
