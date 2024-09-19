@@ -23,6 +23,7 @@ func main() {
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
 	node.Handle("broadcast", handlerGenerator(node, handleBroadcast))
+	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 	node.Handle("topology", handlerGenerator(node, handleTopology))
 
 	err := node.Run()
@@ -30,6 +31,12 @@ func main() {
 		log.Fatal(err)
 	}
 
+}
+
+func noOp(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		return nil
+	}
 }
 
 func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstrom.HandlerFunc) maelstrom.HandlerFunc {
@@ -84,8 +91,12 @@ func handleBroadcast(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 
 		message := body.Message
-		state.InsertMessage(int(message))
-
+		err = state.SaveBroadcastMessageIfNew(message, node)
+		if err != nil {
+			return err
+		}
+		// state.InsertMessage(int(message))
+		//
 		var reply map[string]any = map[string]any{}
 		reply["type"] = "broadcast_ok"
 		return node.Reply(msg, reply)
