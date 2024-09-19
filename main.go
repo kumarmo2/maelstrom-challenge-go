@@ -9,8 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jepsen-io/maelstrom/demo/go"
-	// crate "github.com/kumarmo2/maelstrom-challenge-go/maelstromchallengego"
-	// ulid "github.com/oklog/ulid/v2"
 )
 
 func main() {
@@ -39,12 +37,6 @@ func handleGenerate(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		// var entropy = crate.NewRand()
-		// entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
-		// id, err := ulid.New(ulid.Timestamp(time.Now()), entropy)
-		// if err != nil {
-		// 	return err
-		// }
 		id := uuid.New()
 
 		body["type"] = "generate_ok"
