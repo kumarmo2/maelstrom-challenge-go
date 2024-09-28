@@ -3,13 +3,20 @@ package lib
 import (
 	"math/rand/v2"
 	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
+type MessageItem struct {
+	num int
+}
+
 type NodeState struct {
-	msgLock  *sync.RWMutex
-	messages map[int]bool
+	msgLock    *sync.RWMutex
+	messages   map[int]bool
+	nodeId     string
+	otherNodes []string
 }
 
 func NewNodeState() *NodeState {
@@ -22,24 +29,21 @@ func (self *NodeState) InsertMessage(message int) {
 	self.messages[message] = true
 }
 
-var nodeId string
-var otherNodes []string
-
-func setNodesInfo(node *maelstrom.Node) {
-	nodeId = node.ID()
+func (self *NodeState) setNodesInfo(node *maelstrom.Node) {
+	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
-	otherNodes = make([]string, 0)
+	self.otherNodes = make([]string, 0)
 
 	for _, n := range allNodes {
-		if n != nodeId {
-			otherNodes = append(otherNodes, n)
+		if n != self.nodeId {
+			self.otherNodes = append(self.otherNodes, n)
 		}
 	}
 }
 
 func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.Node) error {
-	sync.OnceFunc(func() { setNodesInfo(node) })()
+	sync.OnceFunc(func() { self.setNodesInfo(node) })()
 	// fmt.Fprintf(os.Stderr, "otherNodes: %v", otherNodes)
 	self.msgLock.RLock()
 	_, exists := self.messages[message]
@@ -61,13 +65,25 @@ func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.No
 	var body map[string]any = map[string]any{}
 	body["type"] = "broadcast"
 	body["message"] = message
-	for _, nbt := range otherNodes {
+	for _, nbt := range self.otherNodes {
 		err := node.Send(nbt, body)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (self *NodeState) BackgroundSync() {
+	for {
+		time.Now()
+		time.Sleep(700)
+		if self.nodeId == "" {
+			continue
+		}
+		// _ := getRandomNodes(self.otherNodes)
+
+	}
 }
 
 func getRandomNodes(otherNodes []string) []string {
