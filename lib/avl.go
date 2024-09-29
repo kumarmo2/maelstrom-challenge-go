@@ -1,5 +1,7 @@
 package lib
 
+import "fmt"
+
 type AVLKey interface {
 	Key() int
 }
@@ -91,4 +93,21 @@ func singleLLRotation[T AVLKey](node *AVLNode[T]) *AVLNode[T] {
 	toReturn.height = max(height(toReturn.left), node.height) + 1
 
 	return toReturn
+}
+
+func (self *AVLTree[T]) PrintInorder() {
+	self.printInorderBinarySearch(self.root)
+}
+
+func (self *AVLTree[T]) printInorderBinarySearch(node *AVLNode[T]) {
+	if node == nil {
+		return
+	}
+	self.printInorderBinarySearch(node.left)
+	fmt.Println(node.item.Key())
+	self.printInorderBinarySearch(node.right)
+}
+
+func (tree *AVLTree[T]) Height() int {
+	return height(tree.root)
 }
