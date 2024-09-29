@@ -127,3 +127,21 @@ func (self *AVLTree[T]) printInorderBinarySearch(node *AVLNode[T]) {
 func (tree *AVLTree[T]) Height() int {
 	return height(tree.root)
 }
+
+func (tree *AVLTree[T]) ToKeySlice() []int {
+	slice := make([]int, 0)
+
+	slice = tree.toKeySliceRecursive(tree.root, slice)
+
+	return slice
+}
+
+func (tree *AVLTree[T]) toKeySliceRecursive(node *AVLNode[T], slice []int) []int {
+	if node == nil {
+		return slice
+	}
+	slice = tree.toKeySliceRecursive(node.left, slice)
+	slice = append(slice, node.item.Key())
+	slice = tree.toKeySliceRecursive(node.right, slice)
+	return slice
+}

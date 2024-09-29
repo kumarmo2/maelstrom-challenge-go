@@ -21,7 +21,7 @@ func main() {
 
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
-	// node.Handle("read", handlerGenerator(node, handleRead))
+	node.Handle("read", handlerGenerator(node, handleRead))
 	node.Handle("broadcast", handlerGenerator(node, handleBroadcast))
 	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 	node.Handle("topology", handlerGenerator(node, handleTopology))
@@ -52,30 +52,32 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 	}
 }
 
-// func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
-// 	return func(msg maelstrom.Message) error {
-// 		var err error
-// 		callback := func(messages *lib.AVLTree[*lib.MessageItem]) {
-// 			var body map[string]any
-// 			e := json.Unmarshal(msg.Body, &body)
-// 			if e != nil {
-// 				err = e
-// 				return
-// 			}
-// 			body["type"] = "read_ok"
-//
-// 			msgs := make([]int, 0)
-// 			for k := range messages {
-// 				msgs = append(msgs, k)
-// 			}
-//
-// 			body["messages"] = msgs
-// 			err = node.Reply(msg, body)
-// 		}
-// 		state.ReadMessages(callback)
-// 		return err
-// 	}
-// }
+func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		var err error
+		callback := func(messages *lib.AVLTree[*lib.MessageItem]) {
+			var body map[string]any
+			e := json.Unmarshal(msg.Body, &body)
+			if e != nil {
+				err = e
+				return
+			}
+			body["type"] = "read_ok"
+
+			// msgs := make([]int, 0)
+			msgs := messages.ToKeySlice()
+
+			// for k := range messages {
+			// 	msgs = append(msgs, k)
+			// }
+
+			body["messages"] = msgs
+			err = node.Reply(msg, body)
+		}
+		state.ReadMessages(callback)
+		return err
+	}
+}
 
 func handleBroadcast(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
