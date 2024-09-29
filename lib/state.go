@@ -9,24 +9,34 @@ import (
 )
 
 type MessageItem struct {
-	num int
+	num  int
+	time time.Time
+}
+
+func newMessageItem(num int) *MessageItem {
+	return &MessageItem{num: num, time: time.Now()}
+}
+
+func (message *MessageItem) Key() int {
+	return message.num
 }
 
 type NodeState struct {
 	msgLock    *sync.RWMutex
-	messages   map[int]bool
+	messages   *AVLTree[*MessageItem]
 	nodeId     string
 	otherNodes []string
 }
 
 func NewNodeState() *NodeState {
-	return &NodeState{msgLock: &sync.RWMutex{}, messages: make(map[int]bool)}
+	return &NodeState{msgLock: &sync.RWMutex{}, messages: NewAVLTRee[*MessageItem]()}
 }
 
 func (self *NodeState) InsertMessage(message int) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
-	self.messages[message] = true
+	msg := newMessageItem(message)
+	self.messages.InsertItem(msg)
 }
 
 func (self *NodeState) setNodesInfo(node *maelstrom.Node) {
@@ -46,7 +56,8 @@ func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.No
 	sync.OnceFunc(func() { self.setNodesInfo(node) })()
 	// fmt.Fprintf(os.Stderr, "otherNodes: %v", otherNodes)
 	self.msgLock.RLock()
-	_, exists := self.messages[message]
+	// _, exists := self.messages[message]
+	exists := self.messages.ContainsKey(message)
 	if exists {
 		// No need to broadcast further.
 		self.msgLock.RUnlock()
@@ -108,7 +119,8 @@ func getRandomNodes(otherNodes []string) []string {
 
 }
 
-func (self *NodeState) ReadMessages(callback func(messages map[int]bool)) {
+// func (self *NodeState) ReadMessages(callback func(messages map[int]bool)) {
+func (self *NodeState) ReadMessages(callback func(messages *AVLTree[*MessageItem])) {
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
 	callback(self.messages)

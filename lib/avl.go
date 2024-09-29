@@ -99,6 +99,22 @@ func (self *AVLTree[T]) PrintInorder() {
 	self.printInorderBinarySearch(self.root)
 }
 
+func (tree *AVLTree[T]) ContainsKey(key int) bool {
+	return tree.ContainsKeyRecursive(tree.root, key)
+}
+
+func (tree *AVLTree[T]) ContainsKeyRecursive(node *AVLNode[T], key int) bool {
+	if node == nil {
+		return false
+	}
+	if key < node.item.Key() {
+		return tree.ContainsKeyRecursive(node.left, key)
+	} else if key > node.item.Key() {
+		return tree.ContainsKeyRecursive(node.right, key)
+	}
+	return true
+}
+
 func (self *AVLTree[T]) printInorderBinarySearch(node *AVLNode[T]) {
 	if node == nil {
 		return
