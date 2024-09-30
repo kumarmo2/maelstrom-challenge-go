@@ -13,12 +13,13 @@ import (
 	"github.com/kumarmo2/maelstrom-challenge-go/lib"
 )
 
-var state *lib.NodeState = lib.NewNodeState()
+var state *lib.NodeState
 
 func main() {
 	log.Println("hello world")
 	node := maelstrom.NewNode()
 
+	node.Handle("init", handlerGenerator(node, handleInit))
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
@@ -41,6 +42,20 @@ func noOp(node *maelstrom.Node) maelstrom.HandlerFunc {
 
 func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstrom.HandlerFunc) maelstrom.HandlerFunc {
 	return h(node)
+}
+
+func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		var body maelstrom.InitMessageBody
+		if err := json.Unmarshal(msg.Body, &body); err != nil {
+			return err
+		}
+		// Note: I'am assuming that the 'init' will be called first and just once.
+		state = lib.NewNodeState()
+		state.SetNodesInfo(node)
+		return nil
+
+	}
 }
 
 func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {

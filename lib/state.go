@@ -13,6 +13,11 @@ type MessageItem struct {
 	time time.Time
 }
 
+type NodeMetaInfo struct {
+	name     string
+	lastSync time.Time
+}
+
 func newMessageItem(num int) *MessageItem {
 	return &MessageItem{num: num, time: time.Now()}
 }
@@ -25,7 +30,7 @@ type NodeState struct {
 	msgLock    *sync.RWMutex
 	messages   *AVLTree[*MessageItem]
 	nodeId     string
-	otherNodes []string
+	otherNodes map[string]*NodeMetaInfo
 }
 
 func NewNodeState() *NodeState {
@@ -39,22 +44,20 @@ func (self *NodeState) InsertMessage(message int) {
 	self.messages.InsertItem(msg)
 }
 
-func (self *NodeState) setNodesInfo(node *maelstrom.Node) {
+func (self *NodeState) SetNodesInfo(node *maelstrom.Node) {
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
-	self.otherNodes = make([]string, 0)
+	self.otherNodes = make(map[string]*NodeMetaInfo)
 
 	for _, n := range allNodes {
 		if n != self.nodeId {
-			self.otherNodes = append(self.otherNodes, n)
+			self.otherNodes[n] = &NodeMetaInfo{name: n, lastSync: time.Now().Add(time.Minute)}
 		}
 	}
 }
 
 func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.Node) error {
-	sync.OnceFunc(func() { self.setNodesInfo(node) })()
-	// fmt.Fprintf(os.Stderr, "otherNodes: %v", otherNodes)
 	self.msgLock.RLock()
 	// _, exists := self.messages[message]
 	exists := self.messages.ContainsKey(message)
@@ -77,7 +80,7 @@ func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.No
 	body["type"] = "broadcast"
 	body["message"] = message
 	for _, nbt := range self.otherNodes {
-		err := node.Send(nbt, body)
+		err := node.Send(nbt.name, body)
 		if err != nil {
 			return err
 		}
