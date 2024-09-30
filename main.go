@@ -51,8 +51,7 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 			return err
 		}
 		// Note: I'am assuming that the 'init' will be called first and just once.
-		state = lib.NewNodeState()
-		state.SetNodesInfo(node)
+		state = lib.NewNodeState(node)
 		return nil
 
 	}
