@@ -1,6 +1,9 @@
 package lib
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
 type AVLKey interface {
 	Key() int
@@ -27,6 +30,7 @@ func NewAVLTRee[T AVLKey]() *AVLTree[T] {
 
 func (self *AVLTree[T]) InsertItem(item T) {
 	self.root = self.insertItemBinarySearch(self.root, item)
+	log.Printf("inserted,, is root nil: %v\n", self.root == nil)
 }
 
 func height[T AVLKey](node *AVLNode[T]) int {
@@ -134,6 +138,28 @@ func (tree *AVLTree[T]) ToKeySlice() []int {
 	slice = tree.toKeySliceRecursive(tree.root, slice)
 
 	return slice
+}
+
+func (tree *AVLTree[T]) GetItemsGreaterThan(key int) []T {
+	result := make([]T, 0)
+	result = tree.getItemsGreaterThan(tree.root, key, result)
+	return result
+}
+
+func (tree *AVLTree[T]) getItemsGreaterThan(node *AVLNode[T], key int, slice []T) []T {
+	if node == nil {
+		return slice
+	}
+	fmt.Printf("node.item.key: %v, key: %v\n", node.item.Key(), key)
+	if node.item.Key() <= key {
+		slice = tree.getItemsGreaterThan(node.right, key, slice)
+	} else if node.item.Key() > key {
+		slice = append(slice, node.item)
+		slice = tree.getItemsGreaterThan(node.left, key, slice)
+		slice = tree.getItemsGreaterThan(node.right, key, slice)
+	}
+	return slice
+
 }
 
 func (tree *AVLTree[T]) toKeySliceRecursive(node *AVLNode[T], slice []int) []int {

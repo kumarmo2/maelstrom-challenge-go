@@ -18,4 +18,7 @@ func TestInorderPrint(t *testing.T) {
 	tree.PrintInorder()
 	t.Log(tree.Height())
 
+	result := tree.GetItemsGreaterThan(1)
+	t.Log(len(result))
+
 }

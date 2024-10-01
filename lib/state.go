@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"log"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -41,19 +42,29 @@ func (self *MessageStore) ContainsKey(message int) bool {
 	_, exists := self.MessageMap[message]
 	return exists
 }
+func (store *MessageStore) GetItemsGreaterThan(key int) []int {
+	messages := store.messages.GetItemsGreaterThan(key)
+	log.Printf("messages len: %v\n", len(messages))
+	result := make([]int, len(messages))
+	for i, r := range messages {
+		result[i] = r.num
+	}
+	return result
+}
 
 type NodeState struct {
 	msgLock *sync.RWMutex
 	// messages           *AVLTree[*MessageItem]
 	messageStore       *MessageStore
 	nodeId             string
+	node               *maelstrom.Node
 	otherNodesMetaInfo map[string]*NodeMetaInfo
 	otherNodes         []string
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	store := &MessageStore{MessageMap: make(map[int]bool), messages: NewAVLTRee[*MessageItem]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, messageStore: store}
+	self := &NodeState{msgLock: &sync.RWMutex{}, messageStore: store, node: node}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -66,7 +77,7 @@ func NewNodeState(node *maelstrom.Node) *NodeState {
 			self.otherNodes = append(self.otherNodes, n)
 		}
 	}
-	// go self.BackgroundSync()
+	go self.BackgroundSync()
 	return self
 }
 
@@ -101,26 +112,26 @@ func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.No
 	return nil
 }
 
-// func (self *NodeState) BackgroundSync() {
-// 	for {
-// 		time.Now()
-// 		time.Sleep(1000)
-// 		// if self.nodeId == "" {
-// 		// 	continue
-// 		// }
-// 		nodesToSync := getRandomNodes(self.otherNodes)
-// 		// log.Printf("nodesToSync: %v\n", nodesToSync)
-//
-// 		for _, nodeToSync := range nodesToSync {
-// 			nodeMeta, exists := self.otherNodesMetaInfo[nodeToSync]
-// 			if !exists {
-// 				continue
-// 			}
-//
-// 		}
-//
-// 	}
-// }
+func (self *NodeState) BackgroundSync() {
+	for {
+		time.Now()
+		time.Sleep(1000)
+		nodesToSync := getRandomNodes(self.otherNodes)
+
+		for _, nodeToSync := range nodesToSync {
+			nodeMeta, exists := self.otherNodesMetaInfo[nodeToSync]
+			if !exists {
+				continue
+			}
+			lastSync := int(nodeMeta.lastSync.UnixMilli())
+			nums := self.messageStore.GetItemsGreaterThan(lastSync)
+			body := make(map[string]any)
+			body["type"] = "gossip-send-data"
+			body["msgs"] = nums
+			self.node.Send(nodeToSync, body)
+		}
+	}
+}
 
 func getRandomNodes(otherNodes []string) []string {
 	randNodes := make([]string, 0, 2)

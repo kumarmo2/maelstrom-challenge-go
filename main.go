@@ -4,13 +4,10 @@ import (
 	"encoding/json"
 	"log"
 
-	// "math/rand"
-	//
-	// "time"
-
 	"github.com/google/uuid"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"github.com/kumarmo2/maelstrom-challenge-go/lib"
+	"github.com/kumarmo2/maelstrom-challenge-go/util"
 )
 
 var state *lib.NodeState
@@ -20,6 +17,7 @@ func main() {
 	node := maelstrom.NewNode()
 
 	node.Handle("init", handlerGenerator(node, handleInit))
+	node.Handle("gossip-send-data", handlerGenerator(node, handleGossipSendDate))
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
@@ -42,6 +40,13 @@ func noOp(node *maelstrom.Node) maelstrom.HandlerFunc {
 
 func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstrom.HandlerFunc) maelstrom.HandlerFunc {
 	return h(node)
+}
+
+func handleGossipSendDate(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		log.Printf("node: '%v', recieved gossip msg from: %v\n", node.ID(), msg.Src)
+		return nil
+	}
 }
 
 func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
@@ -69,7 +74,7 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		var err error
-		callback := func(messages *lib.AVLTree[*lib.MessageItem]) {
+		callback := func(store *lib.MessageStore) {
 			var body map[string]any
 			e := json.Unmarshal(msg.Body, &body)
 			if e != nil {
@@ -78,12 +83,7 @@ func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 			}
 			body["type"] = "read_ok"
 
-			// msgs := make([]int, 0)
-			msgs := messages.ToKeySlice()
-
-			// for k := range messages {
-			// 	msgs = append(msgs, k)
-			// }
+			msgs := util.ToKeySlice(store.MessageMap)
 
 			body["messages"] = msgs
 			err = node.Reply(msg, body)
