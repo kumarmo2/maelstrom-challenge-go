@@ -43,7 +43,7 @@ func (self *MessageStore) ContainsKey(message int) bool {
 	return exists
 }
 func (store *MessageStore) GetItemsGreaterThan(key int) []int {
-	messages := store.messages.GetItemsGreaterThan(key)
+	messages := store.messages.GetItemsGreaterThanInOrder(key)
 	log.Printf("messages len: %v\n", len(messages))
 	result := make([]int, len(messages))
 	for i, r := range messages {
@@ -73,7 +73,7 @@ func NewNodeState(node *maelstrom.Node) *NodeState {
 
 	for _, n := range allNodes {
 		if n != self.nodeId {
-			self.otherNodesMetaInfo[n] = &NodeMetaInfo{name: n, lastSync: time.Now().Add(time.Minute)}
+			self.otherNodesMetaInfo[n] = &NodeMetaInfo{name: n, lastSync: time.Now().AddDate(0, 0, -1)}
 			self.otherNodes = append(self.otherNodes, n)
 		}
 	}

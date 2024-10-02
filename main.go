@@ -44,7 +44,7 @@ func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstr
 
 func handleGossipSendDate(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		log.Printf("node: '%v', recieved gossip msg from: %v\n", node.ID(), msg.Src)
+		// log.Printf("node: '%v', recieved gossip msg from: %v\n", node.ID(), msg.Src)
 		return nil
 	}
 }
