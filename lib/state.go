@@ -1,8 +1,8 @@
 package lib
 
 import (
-	"log"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -110,30 +110,46 @@ func (self *NodeState) InsertMessage(message int) {
 }
 
 func (self *NodeState) BackgroundSync() {
-	log.Println("..starting the BackgroundSync")
 	for {
-		time.Now()
-		nodeToSync := getRandomNodes(self.otherNodes)
-		time.Sleep(1000 * time.Millisecond)
-		self.NodesMetaInfoMutex.Lock()
-		nodeMeta, exists := self.OtherNodesMetaInfo[nodeToSync]
-		self.NodesMetaInfoMutex.Unlock()
-		if !exists {
-			continue
+		nodesToSync := getRandomNodes(self.otherNodes)
+		time.Sleep(150 * time.Millisecond)
+
+		for _, nodeToSync := range nodesToSync {
+			self.NodesMetaInfoMutex.Lock()
+			nodeMeta, exists := self.OtherNodesMetaInfo[nodeToSync]
+			self.NodesMetaInfoMutex.Unlock()
+			if !exists {
+				continue
+			}
+			lastSync := int(nodeMeta.LastSync.UnixMilli())
+			msgs := self.messageStore.GetItemsGreaterThan(lastSync)
+			if len(msgs) < 1 {
+				continue
+			}
+			body := &GossipSendData{Type: "gossip-send-data", Messages: msgs}
+			self.node.Send(nodeToSync, body)
+
 		}
-		lastSync := int(nodeMeta.LastSync.UnixMilli())
-		msgs := self.messageStore.GetItemsGreaterThan(lastSync)
-		if len(msgs) < 1 {
-			continue
-		}
-		body := &GossipSendData{Type: "gossip-send-data", Messages: msgs}
-		self.node.Send(nodeToSync, body)
 	}
 }
 
-func getRandomNodes(otherNodes []string) string {
+func getRandomNodes(otherNodes []string) []string {
+	randNodes := make([]string, 0)
 	n := len(otherNodes)
-	return otherNodes[rand.IntN(n)]
+	for {
+		len := len(randNodes)
+		if len == 5 {
+			return randNodes
+		}
+		node := otherNodes[rand.IntN(n)]
+		if slices.Contains(randNodes, node) {
+			continue
+		}
+
+		randNodes = append(randNodes, node)
+
+	}
+
 }
 
 func (self *NodeState) ReadMessages(callback func(messages *MessageStore)) {
