@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"log"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -9,22 +8,32 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
+type GossipSendData struct {
+	Type     string         `json:"type"`
+	Messages []*MessageItem `json:"msgs"`
+}
+
+type GossipSendDataAck struct {
+	Type     string    `json:"type"`
+	LastSync time.Time `json:"lastSync"`
+}
+
 type MessageItem struct {
-	num  int
-	time time.Time
+	Num  int       `json:"num"`
+	Time time.Time `json:"time"`
 }
 
 type NodeMetaInfo struct {
 	name     string
-	lastSync time.Time
+	LastSync time.Time
 }
 
 func newMessageItem(num int) *MessageItem {
-	return &MessageItem{num: num, time: time.Now()}
+	return &MessageItem{Num: num, Time: time.Now()}
 }
 
 func (message *MessageItem) Key() int {
-	return int(message.time.UnixMilli())
+	return int(message.Time.UnixMilli())
 }
 
 type MessageStore struct {
@@ -33,23 +42,29 @@ type MessageStore struct {
 }
 
 func (self *MessageStore) InsertItem(message int) {
+	if _, exists := self.MessageMap[message]; exists {
+		return
+	}
 	msg := newMessageItem(message)
 	self.MessageMap[message] = true
 	self.messages.InsertItem(msg)
+}
+
+func (self *MessageStore) insertMessageItem(message *MessageItem) {
+	if _, exists := self.MessageMap[message.Num]; exists {
+		return
+	}
+	self.MessageMap[message.Num] = true
+	self.messages.InsertItem(message)
 }
 
 func (self *MessageStore) ContainsKey(message int) bool {
 	_, exists := self.MessageMap[message]
 	return exists
 }
-func (store *MessageStore) GetItemsGreaterThan(key int) []int {
+func (store *MessageStore) GetItemsGreaterThan(key int) []*MessageItem {
 	messages := store.messages.GetItemsGreaterThanInOrder(key)
-	log.Printf("messages len: %v\n", len(messages))
-	result := make([]int, len(messages))
-	for i, r := range messages {
-		result[i] = r.num
-	}
-	return result
+	return messages
 }
 
 type NodeState struct {
@@ -58,27 +73,33 @@ type NodeState struct {
 	messageStore       *MessageStore
 	nodeId             string
 	node               *maelstrom.Node
-	otherNodesMetaInfo map[string]*NodeMetaInfo
+	OtherNodesMetaInfo map[string]*NodeMetaInfo
+	NodesMetaInfoMutex *sync.Mutex //TODO: change this to a RWMutex
 	otherNodes         []string
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	store := &MessageStore{MessageMap: make(map[int]bool), messages: NewAVLTRee[*MessageItem]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, messageStore: store, node: node}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoMutex: &sync.Mutex{}, messageStore: store, node: node}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
-	self.otherNodesMetaInfo = make(map[string]*NodeMetaInfo)
+	self.OtherNodesMetaInfo = make(map[string]*NodeMetaInfo)
 	self.otherNodes = make([]string, 0)
 
 	for _, n := range allNodes {
 		if n != self.nodeId {
-			self.otherNodesMetaInfo[n] = &NodeMetaInfo{name: n, lastSync: time.Now().AddDate(0, 0, -1)}
+			self.OtherNodesMetaInfo[n] = &NodeMetaInfo{name: n, LastSync: time.Now().AddDate(0, 0, -1)}
 			self.otherNodes = append(self.otherNodes, n)
 		}
 	}
 	go self.BackgroundSync()
 	return self
+}
+func (self *NodeState) InsertMessageItem(message *MessageItem) {
+	self.msgLock.Lock()
+	defer self.msgLock.Unlock()
+	self.messageStore.insertMessageItem(message)
 }
 
 func (self *NodeState) InsertMessage(message int) {
@@ -88,46 +109,50 @@ func (self *NodeState) InsertMessage(message int) {
 	self.messageStore.InsertItem(message)
 }
 
-func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.Node) error {
-	self.msgLock.RLock()
-	exists := self.messageStore.ContainsKey(message)
-	if exists {
-		// No need to broadcast further.
-		self.msgLock.RUnlock()
-		return nil
-	}
-	self.msgLock.RUnlock()
+// FIXME: this shall be removed once we actually start the gossip.
 
-	self.InsertMessage(message)
-
-	var body map[string]any = map[string]any{}
-	body["type"] = "broadcast"
-	body["message"] = message
-	for _, nbt := range self.otherNodesMetaInfo {
-		err := node.Send(nbt.name, body)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.Node) error {
+// 	self.msgLock.RLock()
+// 	exists := self.messageStore.ContainsKey(message)
+// 	if exists {
+// 		// No need to broadcast further.
+// 		self.msgLock.RUnlock()
+// 		return nil
+// 	}
+// 	self.msgLock.RUnlock()
+//
+// 	self.InsertMessage(message)
+//
+// 	var body map[string]any = map[string]any{}
+// 	body["type"] = "broadcast"
+// 	body["message"] = message
+// 	for _, nbt := range self.OtherNodesMetaInfo {
+// 		err := node.Send(nbt.name, body)
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}
+// 	return nil
+// }
 
 func (self *NodeState) BackgroundSync() {
 	for {
 		time.Now()
-		time.Sleep(1000)
+		time.Sleep(2000)
 		nodesToSync := getRandomNodes(self.otherNodes)
-
 		for _, nodeToSync := range nodesToSync {
-			nodeMeta, exists := self.otherNodesMetaInfo[nodeToSync]
+			self.NodesMetaInfoMutex.Lock()
+			nodeMeta, exists := self.OtherNodesMetaInfo[nodeToSync]
+			self.NodesMetaInfoMutex.Unlock()
 			if !exists {
 				continue
 			}
-			lastSync := int(nodeMeta.lastSync.UnixMilli())
-			nums := self.messageStore.GetItemsGreaterThan(lastSync)
-			body := make(map[string]any)
-			body["type"] = "gossip-send-data"
-			body["msgs"] = nums
+			lastSync := int(nodeMeta.LastSync.UnixMilli())
+			msgs := self.messageStore.GetItemsGreaterThan(lastSync)
+			if len(msgs) < 1 {
+				continue
+			}
+			body := &GossipSendData{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
 		}
 	}

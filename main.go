@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 
 	"github.com/google/uuid"
@@ -17,7 +19,8 @@ func main() {
 	node := maelstrom.NewNode()
 
 	node.Handle("init", handlerGenerator(node, handleInit))
-	node.Handle("gossip-send-data", handlerGenerator(node, handleGossipSendDate))
+	node.Handle("gossip-send-data", handlerGenerator(node, handleGossipSendData))
+	node.Handle("gossip-send-data-ack", handlerGenerator(node, handleGossipSendDataAck))
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
@@ -42,10 +45,59 @@ func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstr
 	return h(node)
 }
 
-func handleGossipSendDate(node *maelstrom.Node) maelstrom.HandlerFunc {
+func handleGossipSendDataAck(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		// log.Printf("node: '%v', recieved gossip msg from: %v\n", node.ID(), msg.Src)
-		return nil
+
+		var body lib.GossipSendDataAck
+
+		if err := json.Unmarshal(msg.Body, &body); err != nil {
+			return err
+		}
+
+		src := msg.Src
+		state.NodesMetaInfoMutex.Lock()
+		defer state.NodesMetaInfoMutex.Unlock()
+
+		srcNodeMeta, exists := state.OtherNodesMetaInfo[src]
+		if !exists {
+			return errors.New(fmt.Sprintf("src node: %v, does not exists", src))
+		}
+		if body.LastSync.UnixMilli() > srcNodeMeta.LastSync.UnixMilli() {
+			srcNodeMeta.LastSync = body.LastSync
+		}
+		return node.Reply(msg, map[string]any{})
+	}
+}
+func handleGossipSendData(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		var body lib.GossipSendData
+		if err := json.Unmarshal(msg.Body, &body); err != nil {
+			return nil
+		}
+
+		if body.Messages == nil {
+			log.Println("in handleGossipSendData, received null messages")
+			return nil
+		}
+
+		if len(body.Messages) == 0 {
+			log.Println("handleGossipSendData: zero messages found, returning")
+		}
+
+		// NOTE: ideally these messages should be ordered by time
+
+		lastSync := body.Messages[0].Time
+
+		for _, msg := range body.Messages {
+			state.InsertMessageItem(msg)
+
+			if msg.Time.UnixMilli() >= lastSync.UnixMilli() {
+				lastSync = msg.Time
+			}
+		}
+		response := lib.GossipSendDataAck{LastSync: lastSync, Type: "gossip-send-data-ack"}
+
+		return node.RPC(msg.Src, response, func(msg maelstrom.Message) error { return nil })
 	}
 }
 
@@ -107,10 +159,11 @@ func handleBroadcast(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 
 		message := body.Message
-		err = state.SaveBroadcastMessageIfNew(message, node)
-		if err != nil {
-			return err
-		}
+		state.InsertMessage(message)
+		// err = state.SaveBroadcastMessageIfNew(message, node)
+		// if err != nil {
+		// 	return err
+		// }
 		// state.InsertMessage(int(message))
 		//
 		var reply map[string]any = map[string]any{}

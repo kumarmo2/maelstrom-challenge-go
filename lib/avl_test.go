@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -71,4 +72,24 @@ func TestInorderPrintWithTime(t *testing.T) {
 	result := tree.GetItemsGreaterThanInOrder(int(ti.UnixMilli()))
 	t.Log(len(result))
 
+}
+
+func TestJsonSerde(t *testing.T) {
+	slice := make([]*MessageItem, 0)
+	msg := newMessageItem(12)
+	slice = append(slice, msg)
+
+	s, err := json.Marshal(slice)
+	if err != nil {
+		panic(err)
+	}
+	t.Logf("marshalled string length: %v", len(s))
+	t.Logf("marshalled string : %v", string(s))
+
+	s2 := make([]*MessageItem, 0)
+	err = json.Unmarshal(s, &s2)
+	if err != nil {
+		panic(err)
+	}
+	t.Logf("unmarshalled value: %v", *s2[0])
 }
