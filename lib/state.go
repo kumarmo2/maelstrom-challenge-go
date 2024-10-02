@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"log"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -68,8 +69,7 @@ func (store *MessageStore) GetItemsGreaterThan(key int) []*MessageItem {
 }
 
 type NodeState struct {
-	msgLock *sync.RWMutex
-	// messages           *AVLTree[*MessageItem]
+	msgLock            *sync.RWMutex
 	messageStore       *MessageStore
 	nodeId             string
 	node               *maelstrom.Node
@@ -109,78 +109,33 @@ func (self *NodeState) InsertMessage(message int) {
 	self.messageStore.InsertItem(message)
 }
 
-// FIXME: this shall be removed once we actually start the gossip.
-
-// func (self *NodeState) SaveBroadcastMessageIfNew(message int, node *maelstrom.Node) error {
-// 	self.msgLock.RLock()
-// 	exists := self.messageStore.ContainsKey(message)
-// 	if exists {
-// 		// No need to broadcast further.
-// 		self.msgLock.RUnlock()
-// 		return nil
-// 	}
-// 	self.msgLock.RUnlock()
-//
-// 	self.InsertMessage(message)
-//
-// 	var body map[string]any = map[string]any{}
-// 	body["type"] = "broadcast"
-// 	body["message"] = message
-// 	for _, nbt := range self.OtherNodesMetaInfo {
-// 		err := node.Send(nbt.name, body)
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
-
 func (self *NodeState) BackgroundSync() {
+	log.Println("..starting the BackgroundSync")
 	for {
 		time.Now()
-		time.Sleep(2000)
-		nodesToSync := getRandomNodes(self.otherNodes)
-		for _, nodeToSync := range nodesToSync {
-			self.NodesMetaInfoMutex.Lock()
-			nodeMeta, exists := self.OtherNodesMetaInfo[nodeToSync]
-			self.NodesMetaInfoMutex.Unlock()
-			if !exists {
-				continue
-			}
-			lastSync := int(nodeMeta.LastSync.UnixMilli())
-			msgs := self.messageStore.GetItemsGreaterThan(lastSync)
-			if len(msgs) < 1 {
-				continue
-			}
-			body := &GossipSendData{Type: "gossip-send-data", Messages: msgs}
-			self.node.Send(nodeToSync, body)
+		nodeToSync := getRandomNodes(self.otherNodes)
+		time.Sleep(1000 * time.Millisecond)
+		self.NodesMetaInfoMutex.Lock()
+		nodeMeta, exists := self.OtherNodesMetaInfo[nodeToSync]
+		self.NodesMetaInfoMutex.Unlock()
+		if !exists {
+			continue
 		}
+		lastSync := int(nodeMeta.LastSync.UnixMilli())
+		msgs := self.messageStore.GetItemsGreaterThan(lastSync)
+		if len(msgs) < 1 {
+			continue
+		}
+		body := &GossipSendData{Type: "gossip-send-data", Messages: msgs}
+		self.node.Send(nodeToSync, body)
 	}
 }
 
-func getRandomNodes(otherNodes []string) []string {
-	randNodes := make([]string, 0, 2)
+func getRandomNodes(otherNodes []string) string {
 	n := len(otherNodes)
-	for {
-		len := len(randNodes)
-		if len == 2 {
-			return randNodes
-		}
-		node := otherNodes[rand.IntN(n)]
-		if len == 0 {
-			randNodes = append(randNodes, node)
-		} else {
-			if randNodes[0] == node {
-				continue
-			} else {
-				randNodes = append(randNodes, node)
-			}
-		}
-	}
-
+	return otherNodes[rand.IntN(n)]
 }
 
-// func (self *NodeState) ReadMessages(callback func(messages map[int]bool)) {
 func (self *NodeState) ReadMessages(callback func(messages *MessageStore)) {
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()

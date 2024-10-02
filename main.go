@@ -160,12 +160,6 @@ func handleBroadcast(node *maelstrom.Node) maelstrom.HandlerFunc {
 
 		message := body.Message
 		state.InsertMessage(message)
-		// err = state.SaveBroadcastMessageIfNew(message, node)
-		// if err != nil {
-		// 	return err
-		// }
-		// state.InsertMessage(int(message))
-		//
 		var reply map[string]any = map[string]any{}
 		reply["type"] = "broadcast_ok"
 		return node.Reply(msg, reply)
