@@ -74,13 +74,14 @@ type NodeState struct {
 	nodeId             string
 	node               *maelstrom.Node
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
-	NodesMetaInfoMutex *sync.Mutex //TODO: change this to a RWMutex
-	otherNodes         []string
+	// NodesMetaInfoMutex *sync.Mutex //TODO: change this to a RWMutex
+	NodesMetaInfoLock *sync.RWMutex //TODO: change this to a RWMutex
+	otherNodes        []string
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	store := &MessageStore{MessageMap: make(map[int]bool), messages: NewAVLTRee[*MessageItem]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoMutex: &sync.Mutex{}, messageStore: store, node: node}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, messageStore: store, node: node}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -115,9 +116,9 @@ func (self *NodeState) BackgroundSync() {
 		time.Sleep(150 * time.Millisecond)
 
 		for _, nodeToSync := range nodesToSync {
-			self.NodesMetaInfoMutex.Lock()
+			self.NodesMetaInfoLock.RLock()
 			nodeMeta, exists := self.OtherNodesMetaInfo[nodeToSync]
-			self.NodesMetaInfoMutex.Unlock()
+			self.NodesMetaInfoLock.RUnlock()
 			if !exists {
 				continue
 			}

@@ -55,8 +55,8 @@ func handleGossipSendDataAck(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 
 		src := msg.Src
-		state.NodesMetaInfoMutex.Lock()
-		defer state.NodesMetaInfoMutex.Unlock()
+		state.NodesMetaInfoLock.Lock()
+		defer state.NodesMetaInfoLock.Unlock()
 
 		srcNodeMeta, exists := state.OtherNodesMetaInfo[src]
 		if !exists {
