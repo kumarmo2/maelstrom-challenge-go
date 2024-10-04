@@ -113,7 +113,7 @@ func (self *NodeState) InsertMessage(message int) {
 func (self *NodeState) BackgroundSync() {
 	for {
 		nodesToSync := getRandomNodes(self.otherNodes)
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 
 		for _, nodeToSync := range nodesToSync {
 			self.NodesMetaInfoLock.RLock()
@@ -139,7 +139,7 @@ func getRandomNodes(otherNodes []string) []string {
 	n := len(otherNodes)
 	for {
 		len := len(randNodes)
-		if len == 5 {
+		if len == 8 {
 			return randNodes
 		}
 		node := otherNodes[rand.IntN(n)]
