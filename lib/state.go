@@ -9,6 +9,20 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
+type MessageStore struct {
+	MessageMap map[int]bool
+	messages   *AVLTree[*MessageItem]
+}
+
+type NodeState struct {
+	msgLock            *sync.RWMutex
+	messageStore       *MessageStore
+	nodeId             string
+	node               *maelstrom.Node
+	OtherNodesMetaInfo map[string]*NodeMetaInfo
+	NodesMetaInfoLock  *sync.RWMutex
+	otherNodes         []string
+}
 type GossipSendData struct {
 	Type     string         `json:"type"`
 	Messages []*MessageItem `json:"msgs"`
@@ -37,11 +51,6 @@ func (message *MessageItem) Key() int {
 	return int(message.Time.UnixMilli())
 }
 
-type MessageStore struct {
-	MessageMap map[int]bool
-	messages   *AVLTree[*MessageItem]
-}
-
 func (self *MessageStore) InsertItem(message int) {
 	if _, exists := self.MessageMap[message]; exists {
 		return
@@ -66,17 +75,6 @@ func (self *MessageStore) ContainsKey(message int) bool {
 func (store *MessageStore) GetItemsGreaterThan(key int) []*MessageItem {
 	messages := store.messages.GetItemsGreaterThanInOrder(key)
 	return messages
-}
-
-type NodeState struct {
-	msgLock            *sync.RWMutex
-	messageStore       *MessageStore
-	nodeId             string
-	node               *maelstrom.Node
-	OtherNodesMetaInfo map[string]*NodeMetaInfo
-	// NodesMetaInfoMutex *sync.Mutex //TODO: change this to a RWMutex
-	NodesMetaInfoLock *sync.RWMutex //TODO: change this to a RWMutex
-	otherNodes        []string
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
