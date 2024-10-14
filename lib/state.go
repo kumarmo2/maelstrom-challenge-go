@@ -6,12 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-type GossipSendData struct {
-	Type     string         `json:"type"`
-	Messages []*MessageItem `json:"msgs"`
+type GossipSendData[T any] struct {
+	Type     string            `json:"type"`
+	Messages []*MessageItem[T] `json:"msgs"`
 }
 
 type GossipSendDataAck struct {
@@ -19,9 +20,10 @@ type GossipSendDataAck struct {
 	LastSync time.Time `json:"lastSync"`
 }
 
-type MessageItem struct {
-	Num  int       `json:"num"`
-	Time time.Time `json:"time"`
+type MessageItem[T any] struct {
+	Message   T         `json:"msg"`
+	MessageId string    `json:"msgid"`
+	Time      time.Time `json:"time"`
 }
 
 type NodeMetaInfo struct {
@@ -29,48 +31,53 @@ type NodeMetaInfo struct {
 	LastSync time.Time
 }
 
-func newMessageItem(num int) *MessageItem {
-	return &MessageItem{Num: num, Time: time.Now()}
+func newMessageItem[T any](msg T) *MessageItem[T] {
+	return &MessageItem[T]{Message: msg, MessageId: uuid.NewString(), Time: time.Now()}
 }
 
-func (message *MessageItem) Key() int {
+func (message *MessageItem[T]) Key() int {
 	return int(message.Time.UnixMilli())
 }
 
-type MessageStore struct {
-	MessageMap map[int]bool
-	messages   *AVLTree[*MessageItem]
+type MessageStoreV2[T any] struct {
+	MessageMap map[string]*MessageItem[T] // messageId to
+	messages   *AVLTree[*MessageItem[T]]
 }
 
-func (self *MessageStore) InsertItem(message int) {
-	if _, exists := self.MessageMap[message]; exists {
-		return
-	}
-	msg := newMessageItem(message)
-	self.MessageMap[message] = true
-	self.messages.InsertItem(msg)
-}
+// type MessageStoreV2 struct {
+// 	MessageMap map[int]bool
+// 	messages   *AVLTree[*MessageItem]
+// }
 
-func (self *MessageStore) insertMessageItem(message *MessageItem) {
-	if _, exists := self.MessageMap[message.Num]; exists {
+func (self *MessageStoreV2[T]) InsertItem(message *MessageItem[T]) {
+	if _, exists := self.MessageMap[message.MessageId]; exists {
 		return
 	}
-	self.MessageMap[message.Num] = true
+	// msg := newMessageItem(message)
+	self.MessageMap[message.MessageId] = message
 	self.messages.InsertItem(message)
 }
 
-func (self *MessageStore) ContainsKey(message int) bool {
-	_, exists := self.MessageMap[message]
+func (self *MessageStoreV2[T]) insertMessageItem(message *MessageItem[T]) {
+	if _, exists := self.MessageMap[message.MessageId]; exists {
+		return
+	}
+	self.MessageMap[message.MessageId] = message
+	self.messages.InsertItem(message)
+}
+
+func (self *MessageStoreV2[T]) ContainsKey(message *MessageItem[T]) bool {
+	_, exists := self.MessageMap[message.MessageId]
 	return exists
 }
-func (store *MessageStore) GetItemsGreaterThan(key int) []*MessageItem {
+func (store *MessageStoreV2[T]) GetItemsGreaterThan(key int) []*MessageItem[T] {
 	messages := store.messages.GetItemsGreaterThanInOrder(key)
 	return messages
 }
 
 type NodeState struct {
 	msgLock            *sync.RWMutex
-	messageStore       *MessageStore
+	MessageStoreV2     *MessageStoreV2[int]
 	nodeId             string
 	node               *maelstrom.Node
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
@@ -80,8 +87,8 @@ type NodeState struct {
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
-	store := &MessageStore{MessageMap: make(map[int]bool), messages: NewAVLTRee[*MessageItem]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, messageStore: store, node: node}
+	store := &MessageStoreV2[int]{MessageMap: make(map[string]*MessageItem[int]), messages: NewAVLTRee[*MessageItem[int]]()}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -97,17 +104,17 @@ func NewNodeState(node *maelstrom.Node) *NodeState {
 	go self.BackgroundSync()
 	return self
 }
-func (self *NodeState) InsertMessageItem(message *MessageItem) {
+func (self *NodeState) InsertMessageItem(message *MessageItem[int]) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
-	self.messageStore.insertMessageItem(message)
+	self.MessageStoreV2.insertMessageItem(message)
 }
 
 func (self *NodeState) InsertMessage(message int) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
-	// msg := newMessageItem(message)
-	self.messageStore.InsertItem(message)
+	msg := newMessageItem(message)
+	self.MessageStoreV2.InsertItem(msg)
 }
 
 func (self *NodeState) BackgroundSync() {
@@ -123,11 +130,11 @@ func (self *NodeState) BackgroundSync() {
 				continue
 			}
 			lastSync := int(nodeMeta.LastSync.UnixMilli())
-			msgs := self.messageStore.GetItemsGreaterThan(lastSync)
+			msgs := self.MessageStoreV2.GetItemsGreaterThan(lastSync)
 			if len(msgs) < 1 {
 				continue
 			}
-			body := &GossipSendData{Type: "gossip-send-data", Messages: msgs}
+			body := &GossipSendData[int]{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
 
 		}
@@ -153,9 +160,9 @@ func getRandomNodes(otherNodes []string) []string {
 
 }
 
-func (self *NodeState) ReadMessages(callback func(messages *MessageStore)) {
+func (self *NodeState) ReadMessages(callback func(messages *MessageStoreV2[int])) {
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
-	callback(self.messageStore)
+	callback(self.MessageStoreV2)
 
 }

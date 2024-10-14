@@ -70,7 +70,7 @@ func handleGossipSendDataAck(node *maelstrom.Node) maelstrom.HandlerFunc {
 }
 func handleGossipSendData(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		var body lib.GossipSendData
+		var body lib.GossipSendData[int]
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return nil
 		}
@@ -126,7 +126,7 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		var err error
-		callback := func(store *lib.MessageStore) {
+		callback := func(store *lib.MessageStoreV2[int]) {
 			var body map[string]any
 			e := json.Unmarshal(msg.Body, &body)
 			if e != nil {
@@ -135,9 +135,19 @@ func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 			}
 			body["type"] = "read_ok"
 
-			msgs := util.ToKeySlice(store.MessageMap)
+			msgs := util.ToValSlice(store.MessageMap)
 
-			body["messages"] = msgs
+			nums := make([]int, len(msgs))
+
+			i := 0
+			n := len(msgs)
+
+			for i < n {
+				nums[i] = msgs[i].Message
+				i++
+			}
+
+			body["messages"] = nums
 			err = node.Reply(msg, body)
 		}
 		state.ReadMessages(callback)
