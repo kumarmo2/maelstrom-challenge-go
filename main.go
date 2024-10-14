@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"github.com/kumarmo2/maelstrom-challenge-go/lib"
-	"github.com/kumarmo2/maelstrom-challenge-go/util"
 )
 
 var state *lib.NodeState
@@ -135,15 +134,15 @@ func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 			}
 			body["type"] = "read_ok"
 
-			msgs := util.ToValSlice(store.MessageMap)
+			// msgs := util.ToValSlice(store.MessageMap)
 
-			nums := make([]int, len(msgs))
+			n := len(store.MessageMap)
+			nums := make([]int, n)
 
 			i := 0
-			n := len(msgs)
 
-			for i < n {
-				nums[i] = msgs[i].Message
+			for _, msg := range store.MessageMap {
+				nums[i] = msg.Message
 				i++
 			}
 
