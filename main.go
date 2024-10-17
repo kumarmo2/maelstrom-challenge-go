@@ -81,18 +81,15 @@ func handleGossipSendData(node *maelstrom.Node) maelstrom.HandlerFunc {
 
 		if len(body.Messages) == 0 {
 			log.Println("handleGossipSendData: zero messages found, returning")
+			return nil
 		}
 
 		// NOTE: ideally these messages should be ordered by time
 
-		lastSync := body.Messages[0].Time
-
-		for _, msg := range body.Messages {
-			state.InsertMessageItem(msg)
-
-			if msg.Time.UnixMilli() >= lastSync.UnixMilli() {
-				lastSync = msg.Time
-			}
+		lastSync, err := state.InsertMessageItems(body.Messages)
+		if err != nil {
+			log.Printf("error: %v\n", err)
+			return err
 		}
 		response := lib.GossipSendDataAck{LastSync: lastSync, Type: "gossip-send-data-ack"}
 

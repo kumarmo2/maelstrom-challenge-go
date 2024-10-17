@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"errors"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -104,10 +105,25 @@ func NewNodeState(node *maelstrom.Node) *NodeState {
 	go self.BackgroundSync()
 	return self
 }
-func (self *NodeState) InsertMessageItem(message *MessageItem[int]) {
+func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Time, error) {
+	if messages == nil {
+		return time.Now(), errors.New("messages found nil")
+	}
+	if len(messages) == 0 {
+		return time.Now(), errors.New("empty messages found")
+	}
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
-	self.MessageStoreV2.insertMessageItem(message)
+
+	lastSync := messages[0].Time
+	for _, msg := range messages {
+		self.MessageStoreV2.insertMessageItem(msg)
+		if msg.Time.UnixMilli() >= lastSync.UnixMilli() {
+			lastSync = msg.Time
+		}
+	}
+	return lastSync, nil
+
 }
 
 func (self *NodeState) InsertMessage(message int) {
