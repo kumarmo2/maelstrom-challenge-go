@@ -45,20 +45,6 @@ type MessageStoreV2[T any] struct {
 	messages   *AVLTree[*MessageItem[T]]
 }
 
-// type MessageStoreV2 struct {
-// 	MessageMap map[int]bool
-// 	messages   *AVLTree[*MessageItem]
-// }
-
-func (self *MessageStoreV2[T]) InsertItem(message *MessageItem[T]) {
-	if _, exists := self.MessageMap[message.MessageId]; exists {
-		return
-	}
-	// msg := newMessageItem(message)
-	self.MessageMap[message.MessageId] = message
-	self.messages.InsertItem(message)
-}
-
 func (self *MessageStoreV2[T]) insertMessageItem(message *MessageItem[T]) {
 	if _, exists := self.MessageMap[message.MessageId]; exists {
 		return
@@ -130,7 +116,7 @@ func (self *NodeState) InsertMessage(message int) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
 	msg := newMessageItem(message)
-	self.MessageStoreV2.InsertItem(msg)
+	self.MessageStoreV2.insertMessageItem(msg)
 }
 
 func (self *NodeState) BackgroundSync() {
