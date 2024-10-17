@@ -68,9 +68,9 @@ type NodeState struct {
 	nodeId             string
 	node               *maelstrom.Node
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
-	// NodesMetaInfoMutex *sync.Mutex //TODO: change this to a RWMutex
-	NodesMetaInfoLock *sync.RWMutex //TODO: change this to a RWMutex
-	otherNodes        []string
+	NodesMetaInfoLock  *sync.RWMutex
+	otherNodes         []string
+	notify             chan bool
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
@@ -119,6 +119,14 @@ func (self *NodeState) InsertMessage(message int) {
 	self.MessageStoreV2.insertMessageItem(msg)
 }
 
+func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[int] {
+	self.msgLock.RLock()
+	defer self.msgLock.RUnlock()
+
+	ls := int(lastSync.UnixMilli())
+	return self.MessageStoreV2.GetItemsGreaterThan(ls)
+}
+
 func (self *NodeState) BackgroundSync() {
 	for {
 		nodesToSync := getRandomNodes(self.otherNodes)
@@ -131,8 +139,7 @@ func (self *NodeState) BackgroundSync() {
 			if !exists {
 				continue
 			}
-			lastSync := int(nodeMeta.LastSync.UnixMilli())
-			msgs := self.MessageStoreV2.GetItemsGreaterThan(lastSync)
+			msgs := self.GetItemsGreaterThan(nodeMeta.LastSync)
 			if len(msgs) < 1 {
 				continue
 			}
