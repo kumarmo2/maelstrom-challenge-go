@@ -45,12 +45,13 @@ type MessageStoreV2[T any] struct {
 	messages   *AVLTree[*MessageItem[T]]
 }
 
-func (self *MessageStoreV2[T]) insertMessageItem(message *MessageItem[T]) {
+func (self *MessageStoreV2[T]) insertMessageItem(message *MessageItem[T]) bool {
 	if _, exists := self.MessageMap[message.MessageId]; exists {
-		return
+		return false
 	}
 	self.MessageMap[message.MessageId] = message
 	self.messages.InsertItem(message)
+	return true
 }
 
 func (self *MessageStoreV2[T]) ContainsKey(message *MessageItem[T]) bool {
@@ -68,14 +69,14 @@ type NodeState struct {
 	nodeId             string
 	node               *maelstrom.Node
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
-	// NodesMetaInfoMutex *sync.Mutex //TODO: change this to a RWMutex
-	NodesMetaInfoLock *sync.RWMutex //TODO: change this to a RWMutex
-	otherNodes        []string
+	NodesMetaInfoLock  *sync.RWMutex
+	otherNodes         []string
+	notifyWhenNewMsgs  chan int
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	store := &MessageStoreV2[int]{MessageMap: make(map[string]*MessageItem[int]), messages: NewAVLTRee[*MessageItem[int]]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan int, 200)}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -102,27 +103,39 @@ func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Ti
 	defer self.msgLock.Unlock()
 
 	lastSync := messages[0].Time
+
 	for _, msg := range messages {
-		self.MessageStoreV2.insertMessageItem(msg)
+		if self.MessageStoreV2.insertMessageItem(msg) {
+			self.notifyWhenNewMsgs <- msg.Message
+		}
 		if msg.Time.UnixMilli() >= lastSync.UnixMilli() {
 			lastSync = msg.Time
 		}
 	}
 	return lastSync, nil
-
 }
 
 func (self *NodeState) InsertMessage(message int) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
 	msg := newMessageItem(message)
-	self.MessageStoreV2.insertMessageItem(msg)
+	if self.MessageStoreV2.insertMessageItem(msg) {
+		self.notifyWhenNewMsgs <- msg.Message
+	}
+}
+
+func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[int] {
+	self.msgLock.RLock()
+	defer self.msgLock.RUnlock()
+
+	ls := int(lastSync.UnixMilli())
+	return self.MessageStoreV2.GetItemsGreaterThan(ls)
 }
 
 func (self *NodeState) BackgroundSync() {
 	for {
 		nodesToSync := getRandomNodes(self.otherNodes)
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 
 		for _, nodeToSync := range nodesToSync {
 			self.NodesMetaInfoLock.RLock()
@@ -131,11 +144,11 @@ func (self *NodeState) BackgroundSync() {
 			if !exists {
 				continue
 			}
-			lastSync := int(nodeMeta.LastSync.UnixMilli())
-			msgs := self.MessageStoreV2.GetItemsGreaterThan(lastSync)
+			msgs := self.GetItemsGreaterThan(nodeMeta.LastSync)
 			if len(msgs) < 1 {
 				continue
 			}
+
 			body := &GossipSendData[int]{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
 
@@ -148,16 +161,14 @@ func getRandomNodes(otherNodes []string) []string {
 	n := len(otherNodes)
 	for {
 		len := len(randNodes)
-		if len == 8 {
+		if len == 4 {
 			return randNodes
 		}
 		node := otherNodes[rand.IntN(n)]
 		if slices.Contains(randNodes, node) {
 			continue
 		}
-
 		randNodes = append(randNodes, node)
-
 	}
 
 }
@@ -166,5 +177,4 @@ func (self *NodeState) ReadMessages(callback func(messages *MessageStoreV2[int])
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
 	callback(self.MessageStoreV2)
-
 }

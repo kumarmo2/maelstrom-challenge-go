@@ -12,6 +12,7 @@ import (
 )
 
 var state *lib.NodeState
+var gc *lib.GlobalGCV2
 
 func main() {
 	log.Println("hello world")
@@ -23,6 +24,7 @@ func main() {
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
+	node.Handle("add", handlerGenerator(node, handleAdd))
 	node.Handle("broadcast", handlerGenerator(node, handleBroadcast))
 	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 	node.Handle("topology", handlerGenerator(node, handleTopology))
@@ -103,8 +105,10 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
-		// Note: I'am assuming that the 'init' will be called first and just once.
 		state = lib.NewNodeState(node)
+		gc = lib.NewGlobalGCV2(state)
+		gc.Start()
+
 		return nil
 
 	}
@@ -118,36 +122,40 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 		return node.Reply(msg, body)
 	}
 }
+func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		type Body struct {
+			Variant string `json:"type"`
+			Val     int    `json:"delta"`
+		}
+		var body Body
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
+		}
+		val := body.Val
+		log.Printf("got %v to add: ", val)
+		state.InsertMessage(val)
+		var reply map[string]any = map[string]any{}
+		reply["type"] = "add_ok"
+		return node.Reply(msg, reply)
+
+	}
+}
 
 func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		var err error
-		callback := func(store *lib.MessageStoreV2[int]) {
-			var body map[string]any
-			e := json.Unmarshal(msg.Body, &body)
-			if e != nil {
-				err = e
-				return
-			}
-			body["type"] = "read_ok"
-
-			// msgs := util.ToValSlice(store.MessageMap)
-
-			n := len(store.MessageMap)
-			nums := make([]int, n)
-
-			i := 0
-
-			for _, msg := range store.MessageMap {
-				nums[i] = msg.Message
-				i++
-			}
-
-			body["messages"] = nums
-			err = node.Reply(msg, body)
+		var body map[string]any
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
 		}
-		state.ReadMessages(callback)
-		return err
+
+		val := gc.Counter
+		body["type"] = "read_ok"
+		body["value"] = val
+		return node.Reply(msg, body)
+
 	}
 }
 
