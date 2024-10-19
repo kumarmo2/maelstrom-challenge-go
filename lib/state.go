@@ -112,14 +112,7 @@ func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Ti
 			lastSync = msg.Time
 		}
 	}
-
-	// select {
-	// case self.notifyWhenNewMsgs <- true:
-	// default:
-	// }
-
 	return lastSync, nil
-
 }
 
 func (self *NodeState) InsertMessage(message int) {
@@ -129,11 +122,6 @@ func (self *NodeState) InsertMessage(message int) {
 	if self.MessageStoreV2.insertMessageItem(msg) {
 		self.notifyWhenNewMsgs <- msg.Message
 	}
-
-	// select {
-	// case self.notifyWhenNewMsgs <- true:
-	// default:
-	// }
 }
 
 func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[int] {
@@ -161,12 +149,6 @@ func (self *NodeState) BackgroundSync() {
 				continue
 			}
 
-			// Non-blocking channel send.
-			// select {
-			// case self.notifyWhenNewMsgs <- true:
-			// default:
-			// 	log.Println("NodeState.NotifyChan: could'nt send")
-			// }
 			body := &GossipSendData[int]{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
 
@@ -179,16 +161,14 @@ func getRandomNodes(otherNodes []string) []string {
 	n := len(otherNodes)
 	for {
 		len := len(randNodes)
-		if len == 1 {
+		if len == 4 {
 			return randNodes
 		}
 		node := otherNodes[rand.IntN(n)]
 		if slices.Contains(randNodes, node) {
 			continue
 		}
-
 		randNodes = append(randNodes, node)
-
 	}
 
 }
@@ -197,5 +177,4 @@ func (self *NodeState) ReadMessages(callback func(messages *MessageStoreV2[int])
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
 	callback(self.MessageStoreV2)
-
 }

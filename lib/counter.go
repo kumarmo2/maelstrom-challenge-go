@@ -1,5 +1,6 @@
 package lib
 
+// NOTE: this is a operation based grow only CRDT
 type GlobalGCV2 struct {
 	Counter   int
 	nodeState *NodeState

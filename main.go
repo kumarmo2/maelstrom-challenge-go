@@ -13,7 +13,6 @@ import (
 
 var state *lib.NodeState
 var gc *lib.GlobalGCV2
-var seqKV *maelstrom.KV
 
 func main() {
 	log.Println("hello world")
@@ -106,9 +105,7 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
-		// Note: I'am assuming that the 'init' will be called first and just once.
 		state = lib.NewNodeState(node)
-		seqKV = maelstrom.NewSeqKV(node)
 		gc = lib.NewGlobalGCV2(state)
 		gc.Start()
 
@@ -153,58 +150,12 @@ func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if e != nil {
 			return e
 		}
-		// gc.Lock.RLock()
-		// defer gc.Lock.RUnlock()
-		// val := gc.Counter
-		// val, e := seqKV.ReadInt(context.Background(), "counter")
-		// if e != nil {
-		// 	log.Printf("error while reading int, e:  %v\n", e)
-		// 	return e
-		// }
+
 		val := gc.Counter
 		body["type"] = "read_ok"
 		body["value"] = val
 		return node.Reply(msg, body)
 
-		// select {
-		// case <-gc.NotifyChan:
-		// default:
-		// }
-		// gc.Lock.RLock() // NOTE: hmmm, do we really need acquire the lock here with our approach.
-		// counter := gc.Counter
-		//
-		// log.Println("--- doing CAS from read1")
-		// err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
-		// gc.Lock.RUnlock()
-		//
-		// if err == nil {
-		// 	body["type"] = "read_ok"
-		// 	body["value"] = counter
-		// 	log.Println(">>>>>> read: done success")
-		// 	return nil
-		// } else {
-		// 	log.Println(">>>>>> read: going in for the loop")
-		// }
-		//
-		// for {
-		// 	<-gc.NotifyChan
-		// 	gc.Lock.RLock()
-		// 	counter = gc.Counter
-		// 	log.Println("--- doing CAS from read2")
-		// 	err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
-		//
-		// 	if err == nil {
-		// 		body["type"] = "read_ok"
-		// 		body["value"] = counter
-		// 		log.Printf("read good,counter: %v ", counter)
-		// 		gc.Lock.RUnlock()
-		// 		return nil
-		// 	} else {
-		// 		gc.Lock.RUnlock()
-		// 		log.Println("...read stuck...")
-		// 	}
-		//
-		// }
 	}
 }
 
