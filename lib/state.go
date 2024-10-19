@@ -2,6 +2,7 @@ package lib
 
 import (
 	"errors"
+	"log"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -70,12 +71,12 @@ type NodeState struct {
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
 	NodesMetaInfoLock  *sync.RWMutex
 	otherNodes         []string
-	notify             chan bool
+	notifyWhenNewMsgs  chan bool
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	store := &MessageStoreV2[int]{MessageMap: make(map[string]*MessageItem[int]), messages: NewAVLTRee[*MessageItem[int]]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan bool, 1)}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -102,12 +103,19 @@ func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Ti
 	defer self.msgLock.Unlock()
 
 	lastSync := messages[0].Time
+
 	for _, msg := range messages {
 		self.MessageStoreV2.insertMessageItem(msg)
 		if msg.Time.UnixMilli() >= lastSync.UnixMilli() {
 			lastSync = msg.Time
 		}
 	}
+
+	select {
+	case self.notifyWhenNewMsgs <- true:
+	default:
+	}
+
 	return lastSync, nil
 
 }
@@ -117,6 +125,11 @@ func (self *NodeState) InsertMessage(message int) {
 	defer self.msgLock.Unlock()
 	msg := newMessageItem(message)
 	self.MessageStoreV2.insertMessageItem(msg)
+
+	select {
+	case self.notifyWhenNewMsgs <- true:
+	default:
+	}
 }
 
 func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[int] {
@@ -130,7 +143,7 @@ func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[in
 func (self *NodeState) BackgroundSync() {
 	for {
 		nodesToSync := getRandomNodes(self.otherNodes)
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 
 		for _, nodeToSync := range nodesToSync {
 			self.NodesMetaInfoLock.RLock()
@@ -142,6 +155,13 @@ func (self *NodeState) BackgroundSync() {
 			msgs := self.GetItemsGreaterThan(nodeMeta.LastSync)
 			if len(msgs) < 1 {
 				continue
+			}
+
+			// Non-blocking channel send.
+			select {
+			case self.notifyWhenNewMsgs <- true:
+			default:
+				log.Println("NodeState.NotifyChan: could'nt send")
 			}
 			body := &GossipSendData[int]{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
@@ -155,7 +175,7 @@ func getRandomNodes(otherNodes []string) []string {
 	n := len(otherNodes)
 	for {
 		len := len(randNodes)
-		if len == 8 {
+		if len == 2 {
 			return randNodes
 		}
 		node := otherNodes[rand.IntN(n)]

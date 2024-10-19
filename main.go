@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 )
 
 var state *lib.NodeState
+var gc *lib.GlobalGC
+var seqKV *maelstrom.KV
 
 func main() {
 	log.Println("hello world")
@@ -23,6 +26,7 @@ func main() {
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
+	node.Handle("add", handlerGenerator(node, handleAdd))
 	node.Handle("broadcast", handlerGenerator(node, handleBroadcast))
 	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 	node.Handle("topology", handlerGenerator(node, handleTopology))
@@ -105,6 +109,11 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 		// Note: I'am assuming that the 'init' will be called first and just once.
 		state = lib.NewNodeState(node)
+		notifyChan := make(chan bool, 1)
+		seqKV = maelstrom.NewSeqKV(node)
+		gc = lib.NewGlobalGC(state, notifyChan, seqKV)
+		gc.Start()
+
 		return nil
 
 	}
@@ -118,36 +127,76 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 		return node.Reply(msg, body)
 	}
 }
+func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		type Body struct {
+			Variant string `json:"type"`
+			Val     int    `json:"delta"`
+		}
+		var body Body
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
+		}
+		val := body.Val
+		log.Printf("got %v to add: ", val)
+		state.InsertMessage(val)
+		var reply map[string]any = map[string]any{}
+		reply["type"] = "add_ok"
+		return node.Reply(msg, reply)
+
+	}
+}
 
 func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		var err error
-		callback := func(store *lib.MessageStoreV2[int]) {
-			var body map[string]any
-			e := json.Unmarshal(msg.Body, &body)
-			if e != nil {
-				err = e
-				return
-			}
-			body["type"] = "read_ok"
-
-			// msgs := util.ToValSlice(store.MessageMap)
-
-			n := len(store.MessageMap)
-			nums := make([]int, n)
-
-			i := 0
-
-			for _, msg := range store.MessageMap {
-				nums[i] = msg.Message
-				i++
-			}
-
-			body["messages"] = nums
-			err = node.Reply(msg, body)
+		var body map[string]any
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			err = e
+			return e
 		}
-		state.ReadMessages(callback)
-		return err
+
+		select {
+		case <-gc.NotifyChan:
+		default:
+		}
+		gc.Lock.RLock() // NOTE: hmmm, do we really need acquire the lock here with our approach.
+		counter := gc.Counter
+
+		log.Println("--- doing CAS from read1")
+		err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
+		gc.Lock.RUnlock()
+
+		if err == nil {
+			body["type"] = "read_ok"
+			body["value"] = counter
+			log.Println(">>>>>> read: done success")
+			return nil
+		} else {
+			log.Println(">>>>>> read: going in for the loop")
+		}
+
+		for {
+			<-gc.NotifyChan
+			gc.Lock.RLock()
+			counter = gc.Counter
+			log.Println("--- doing CAS from read2")
+			err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
+
+			if err == nil {
+				body["type"] = "read_ok"
+				body["value"] = counter
+				log.Printf("read good,counter: %v ", counter)
+				gc.Lock.RUnlock()
+				return nil
+			} else {
+				gc.Lock.RUnlock()
+				log.Println("...read stuck...")
+			}
+
+		}
 	}
 }
 
