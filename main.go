@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +12,7 @@ import (
 )
 
 var state *lib.NodeState
-var gc *lib.GlobalGC
+var gc *lib.GlobalGCV2
 var seqKV *maelstrom.KV
 
 func main() {
@@ -109,9 +108,8 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 		// Note: I'am assuming that the 'init' will be called first and just once.
 		state = lib.NewNodeState(node)
-		notifyChan := make(chan bool, 1)
 		seqKV = maelstrom.NewSeqKV(node)
-		gc = lib.NewGlobalGC(state, notifyChan, seqKV)
+		gc = lib.NewGlobalGCV2(state)
 		gc.Start()
 
 		return nil
@@ -150,53 +148,63 @@ func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
 
 func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		var err error
 		var body map[string]any
 		e := json.Unmarshal(msg.Body, &body)
 		if e != nil {
-			err = e
 			return e
 		}
+		// gc.Lock.RLock()
+		// defer gc.Lock.RUnlock()
+		// val := gc.Counter
+		// val, e := seqKV.ReadInt(context.Background(), "counter")
+		// if e != nil {
+		// 	log.Printf("error while reading int, e:  %v\n", e)
+		// 	return e
+		// }
+		val := gc.Counter
+		body["type"] = "read_ok"
+		body["value"] = val
+		return node.Reply(msg, body)
 
-		select {
-		case <-gc.NotifyChan:
-		default:
-		}
-		gc.Lock.RLock() // NOTE: hmmm, do we really need acquire the lock here with our approach.
-		counter := gc.Counter
-
-		log.Println("--- doing CAS from read1")
-		err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
-		gc.Lock.RUnlock()
-
-		if err == nil {
-			body["type"] = "read_ok"
-			body["value"] = counter
-			log.Println(">>>>>> read: done success")
-			return nil
-		} else {
-			log.Println(">>>>>> read: going in for the loop")
-		}
-
-		for {
-			<-gc.NotifyChan
-			gc.Lock.RLock()
-			counter = gc.Counter
-			log.Println("--- doing CAS from read2")
-			err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
-
-			if err == nil {
-				body["type"] = "read_ok"
-				body["value"] = counter
-				log.Printf("read good,counter: %v ", counter)
-				gc.Lock.RUnlock()
-				return nil
-			} else {
-				gc.Lock.RUnlock()
-				log.Println("...read stuck...")
-			}
-
-		}
+		// select {
+		// case <-gc.NotifyChan:
+		// default:
+		// }
+		// gc.Lock.RLock() // NOTE: hmmm, do we really need acquire the lock here with our approach.
+		// counter := gc.Counter
+		//
+		// log.Println("--- doing CAS from read1")
+		// err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
+		// gc.Lock.RUnlock()
+		//
+		// if err == nil {
+		// 	body["type"] = "read_ok"
+		// 	body["value"] = counter
+		// 	log.Println(">>>>>> read: done success")
+		// 	return nil
+		// } else {
+		// 	log.Println(">>>>>> read: going in for the loop")
+		// }
+		//
+		// for {
+		// 	<-gc.NotifyChan
+		// 	gc.Lock.RLock()
+		// 	counter = gc.Counter
+		// 	log.Println("--- doing CAS from read2")
+		// 	err = seqKV.CompareAndSwap(context.Background(), "counter", counter, counter, true)
+		//
+		// 	if err == nil {
+		// 		body["type"] = "read_ok"
+		// 		body["value"] = counter
+		// 		log.Printf("read good,counter: %v ", counter)
+		// 		gc.Lock.RUnlock()
+		// 		return nil
+		// 	} else {
+		// 		gc.Lock.RUnlock()
+		// 		log.Println("...read stuck...")
+		// 	}
+		//
+		// }
 	}
 }
 

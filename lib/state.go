@@ -2,7 +2,6 @@ package lib
 
 import (
 	"errors"
-	"log"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -46,12 +45,13 @@ type MessageStoreV2[T any] struct {
 	messages   *AVLTree[*MessageItem[T]]
 }
 
-func (self *MessageStoreV2[T]) insertMessageItem(message *MessageItem[T]) {
+func (self *MessageStoreV2[T]) insertMessageItem(message *MessageItem[T]) bool {
 	if _, exists := self.MessageMap[message.MessageId]; exists {
-		return
+		return false
 	}
 	self.MessageMap[message.MessageId] = message
 	self.messages.InsertItem(message)
+	return true
 }
 
 func (self *MessageStoreV2[T]) ContainsKey(message *MessageItem[T]) bool {
@@ -71,12 +71,12 @@ type NodeState struct {
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
 	NodesMetaInfoLock  *sync.RWMutex
 	otherNodes         []string
-	notifyWhenNewMsgs  chan bool
+	notifyWhenNewMsgs  chan int
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	store := &MessageStoreV2[int]{MessageMap: make(map[string]*MessageItem[int]), messages: NewAVLTRee[*MessageItem[int]]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan bool, 1)}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan int, 200)}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -105,16 +105,18 @@ func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Ti
 	lastSync := messages[0].Time
 
 	for _, msg := range messages {
-		self.MessageStoreV2.insertMessageItem(msg)
+		if self.MessageStoreV2.insertMessageItem(msg) {
+			self.notifyWhenNewMsgs <- msg.Message
+		}
 		if msg.Time.UnixMilli() >= lastSync.UnixMilli() {
 			lastSync = msg.Time
 		}
 	}
 
-	select {
-	case self.notifyWhenNewMsgs <- true:
-	default:
-	}
+	// select {
+	// case self.notifyWhenNewMsgs <- true:
+	// default:
+	// }
 
 	return lastSync, nil
 
@@ -124,12 +126,14 @@ func (self *NodeState) InsertMessage(message int) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
 	msg := newMessageItem(message)
-	self.MessageStoreV2.insertMessageItem(msg)
-
-	select {
-	case self.notifyWhenNewMsgs <- true:
-	default:
+	if self.MessageStoreV2.insertMessageItem(msg) {
+		self.notifyWhenNewMsgs <- msg.Message
 	}
+
+	// select {
+	// case self.notifyWhenNewMsgs <- true:
+	// default:
+	// }
 }
 
 func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[int] {
@@ -158,11 +162,11 @@ func (self *NodeState) BackgroundSync() {
 			}
 
 			// Non-blocking channel send.
-			select {
-			case self.notifyWhenNewMsgs <- true:
-			default:
-				log.Println("NodeState.NotifyChan: could'nt send")
-			}
+			// select {
+			// case self.notifyWhenNewMsgs <- true:
+			// default:
+			// 	log.Println("NodeState.NotifyChan: could'nt send")
+			// }
 			body := &GossipSendData[int]{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
 
@@ -175,7 +179,7 @@ func getRandomNodes(otherNodes []string) []string {
 	n := len(otherNodes)
 	for {
 		len := len(randNodes)
-		if len == 2 {
+		if len == 1 {
 			return randNodes
 		}
 		node := otherNodes[rand.IntN(n)]
