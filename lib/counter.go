@@ -3,10 +3,10 @@ package lib
 // NOTE: this is a operation based grow only CRDT
 type GlobalGCV2 struct {
 	Counter   int
-	nodeState *NodeState
+	nodeState *NodeState[int]
 }
 
-func NewGlobalGCV2(ns *NodeState) *GlobalGCV2 {
+func NewGlobalGCV2(ns *NodeState[int]) *GlobalGCV2 {
 	return &GlobalGCV2{Counter: 0, nodeState: ns}
 }
 

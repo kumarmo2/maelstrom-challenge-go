@@ -11,7 +11,7 @@ import (
 	"github.com/kumarmo2/maelstrom-challenge-go/lib"
 )
 
-var state *lib.NodeState
+var state *lib.NodeState[int]
 var gc *lib.GlobalGCV2
 
 func main() {
@@ -23,7 +23,7 @@ func main() {
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
-	node.Handle("add", handlerGenerator(node, handleAdd))
+	// node.Handle("add", handlerGenerator(node, handleAdd))
 	node.Handle("send", handlerGenerator(node, handleSend))
 	node.Handle("poll", handlerGenerator(node, handlePoll))
 	node.Handle("commit_offsets", handlerGenerator(node, handleCommitOffset))
@@ -108,7 +108,7 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
-		state = lib.NewNodeState(node)
+		state = lib.NewNodeState[int](node)
 		// gc = lib.NewGlobalGCV2(state)
 		// gc.Start()
 		return nil
@@ -141,7 +141,7 @@ func handleListOffsets(node *maelstrom.Node) maelstrom.HandlerFunc {
 		result := make(map[string]int)
 
 		for _, k := range body.Keys {
-			logFunc := func() *lib.KafkaLog {
+			logFunc := func() *lib.KafkaLog[int] {
 				return lib.NewLog(k, state)
 			}
 			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
@@ -171,7 +171,7 @@ func handleCommitOffset(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 
 		for k, v := range body.Offsets {
-			logFunc := func() *lib.KafkaLog {
+			logFunc := func() *lib.KafkaLog[int] {
 				return lib.NewLog(k, state)
 			}
 			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
@@ -201,7 +201,7 @@ func handlePoll(node *maelstrom.Node) maelstrom.HandlerFunc {
 		result := make(map[string][][]any)
 
 		for k, v := range body.Offsets {
-			logFunc := func() *lib.KafkaLog {
+			logFunc := func() *lib.KafkaLog[int] {
 				return lib.NewLog(k, state)
 			}
 
@@ -231,7 +231,7 @@ func handleSend(node *maelstrom.Node) maelstrom.HandlerFunc {
 			return e
 		}
 
-		logFunc := func() *lib.KafkaLog {
+		logFunc := func() *lib.KafkaLog[int] {
 			return lib.NewLog(body.Key, state)
 		}
 
@@ -245,25 +245,25 @@ func handleSend(node *maelstrom.Node) maelstrom.HandlerFunc {
 	}
 }
 
-func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
-	return func(msg maelstrom.Message) error {
-		type Body struct {
-			Variant string `json:"type"`
-			Val     int    `json:"delta"`
-		}
-		var body Body
-		e := json.Unmarshal(msg.Body, &body)
-		if e != nil {
-			return e
-		}
-		val := body.Val
-		state.InsertMessage(val)
-		var reply map[string]any = map[string]any{}
-		reply["type"] = "add_ok"
-		return node.Reply(msg, reply)
-
-	}
-}
+// func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
+// 	return func(msg maelstrom.Message) error {
+// 		type Body struct {
+// 			Variant string `json:"type"`
+// 			Val     int    `json:"delta"`
+// 		}
+// 		var body Body
+// 		e := json.Unmarshal(msg.Body, &body)
+// 		if e != nil {
+// 			return e
+// 		}
+// 		val := body.Val
+// 		state.InsertMessage(val)
+// 		var reply map[string]any = map[string]any{}
+// 		reply["type"] = "add_ok"
+// 		return node.Reply(msg, reply)
+//
+// 	}
+// }
 
 func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {

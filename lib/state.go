@@ -63,24 +63,24 @@ func (store *MessageStoreV2[T]) GetItemsGreaterThan(key int) []*MessageItem[T] {
 	return messages
 }
 
-type NodeState struct {
+type NodeState[T any] struct {
 	msgLock            *sync.RWMutex
-	MessageStoreV2     *MessageStoreV2[int]
+	MessageStoreV2     *MessageStoreV2[T]
 	nodeId             string
 	node               *maelstrom.Node
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
 	NodesMetaInfoLock  *sync.RWMutex
 	otherNodes         []string
-	notifyWhenNewMsgs  chan int
+	notifyWhenNewMsgs  chan T
 	linKV              *maelstrom.KV
-	Logs               *ThreadSafeMap[string, *KafkaLog]
+	Logs               *ThreadSafeMap[string, *KafkaLog[T]]
 }
 
-func NewNodeState(node *maelstrom.Node) *NodeState {
-	store := &MessageStoreV2[int]{MessageMap: make(map[string]*MessageItem[int]), messages: NewAVLTRee[*MessageItem[int]]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{},
-		MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan int, 200),
-		linKV: maelstrom.NewLinKV(node), Logs: NewThreadSafeMap[string, *KafkaLog]()}
+func NewNodeState[T any](node *maelstrom.Node) *NodeState[T] {
+	store := &MessageStoreV2[T]{MessageMap: make(map[string]*MessageItem[T]), messages: NewAVLTRee[*MessageItem[T]]()}
+	self := &NodeState[T]{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{},
+		MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan T, 200),
+		linKV: maelstrom.NewLinKV(node), Logs: NewThreadSafeMap[string, *KafkaLog[T]]()}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -96,7 +96,7 @@ func NewNodeState(node *maelstrom.Node) *NodeState {
 	// go self.BackgroundSync() //TODO: for multi-node kafka workload, we will start the BackgroundSync
 	return self
 }
-func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Time, error) {
+func (self *NodeState[T]) InsertMessageItems(messages []*MessageItem[T]) (time.Time, error) {
 	if messages == nil {
 		return time.Now(), errors.New("messages found nil")
 	}
@@ -119,7 +119,7 @@ func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Ti
 	return lastSync, nil
 }
 
-func (self *NodeState) InsertMessage(message int) {
+func (self *NodeState[T]) InsertMessage(message T) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
 	msg := newMessageItem(message)
@@ -128,7 +128,7 @@ func (self *NodeState) InsertMessage(message int) {
 	}
 }
 
-func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[int] {
+func (self *NodeState[T]) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[T] {
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
 
@@ -136,7 +136,7 @@ func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[in
 	return self.MessageStoreV2.GetItemsGreaterThan(ls)
 }
 
-func (self *NodeState) BackgroundSync() {
+func (self *NodeState[T]) BackgroundSync() {
 	for {
 		nodesToSync := getRandomNodes(self.otherNodes)
 		time.Sleep(100 * time.Millisecond)
@@ -153,7 +153,7 @@ func (self *NodeState) BackgroundSync() {
 				continue
 			}
 
-			body := &GossipSendData[int]{Type: "gossip-send-data", Messages: msgs}
+			body := &GossipSendData[T]{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
 
 		}
@@ -177,7 +177,7 @@ func getRandomNodes(otherNodes []string) []string {
 
 }
 
-func (self *NodeState) ReadMessages(callback func(messages *MessageStoreV2[int])) {
+func (self *NodeState[T]) ReadMessages(callback func(messages *MessageStoreV2[T])) {
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
 	callback(self.MessageStoreV2)
