@@ -11,8 +11,7 @@ import (
 	"github.com/kumarmo2/maelstrom-challenge-go/lib"
 )
 
-var state *lib.NodeState[int]
-var gc *lib.GlobalGCV2
+var state *lib.NodeState
 
 func main() {
 	node := maelstrom.NewNode()
@@ -22,8 +21,6 @@ func main() {
 	node.Handle("gossip-send-data-ack", handlerGenerator(node, handleGossipSendDataAck))
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
-	node.Handle("read", handlerGenerator(node, handleRead))
-	// node.Handle("add", handlerGenerator(node, handleAdd))
 	node.Handle("send", handlerGenerator(node, handleSend))
 	node.Handle("poll", handlerGenerator(node, handlePoll))
 	node.Handle("commit_offsets", handlerGenerator(node, handleCommitOffset))
@@ -74,7 +71,7 @@ func handleGossipSendDataAck(node *maelstrom.Node) maelstrom.HandlerFunc {
 }
 func handleGossipSendData(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		var body lib.GossipSendData[int]
+		var body lib.GossipSendData[*lib.LogEvent]
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return nil
 		}
@@ -108,11 +105,8 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
-		state = lib.NewNodeState[int](node)
-		// gc = lib.NewGlobalGCV2(state)
-		// gc.Start()
+		state = lib.NewNodeState(node)
 		return nil
-
 	}
 }
 
@@ -141,11 +135,7 @@ func handleListOffsets(node *maelstrom.Node) maelstrom.HandlerFunc {
 		result := make(map[string]int)
 
 		for _, k := range body.Keys {
-			logFunc := func() *lib.KafkaLog[int] {
-				return lib.NewLog(k, state)
-			}
-			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
-			offset := log.GetCommitOffset()
+			offset := state.Broker.GetCommitOffset(k)
 			result[k] = offset
 		}
 
@@ -171,11 +161,7 @@ func handleCommitOffset(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 
 		for k, v := range body.Offsets {
-			logFunc := func() *lib.KafkaLog[int] {
-				return lib.NewLog(k, state)
-			}
-			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
-			log.CommitOffset(v)
+			state.Broker.CommitOffset(k, v)
 		}
 
 		result := make(map[string]any)
@@ -201,13 +187,8 @@ func handlePoll(node *maelstrom.Node) maelstrom.HandlerFunc {
 		result := make(map[string][][]any)
 
 		for k, v := range body.Offsets {
-			logFunc := func() *lib.KafkaLog[int] {
-				return lib.NewLog(k, state)
-			}
-
-			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
+			items := state.Broker.GetAllFrom(k, v)
 			// NOTE: we should be able to parallelize this.
-			items := log.GetAllFrom(v)
 			result[k] = items
 		}
 
@@ -231,12 +212,7 @@ func handleSend(node *maelstrom.Node) maelstrom.HandlerFunc {
 			return e
 		}
 
-		logFunc := func() *lib.KafkaLog[int] {
-			return lib.NewLog(body.Key, state)
-		}
-
-		log := state.Logs.GetOrCreateAndThenGet(body.Key, logFunc)
-		offset := log.Append(body.Msg)
+		offset := state.Broker.Append(body.Key, body.Msg)
 
 		var reply map[string]any = map[string]any{}
 		reply["type"] = "send_ok"
@@ -245,47 +221,11 @@ func handleSend(node *maelstrom.Node) maelstrom.HandlerFunc {
 	}
 }
 
-// func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
-// 	return func(msg maelstrom.Message) error {
-// 		type Body struct {
-// 			Variant string `json:"type"`
-// 			Val     int    `json:"delta"`
-// 		}
-// 		var body Body
-// 		e := json.Unmarshal(msg.Body, &body)
-// 		if e != nil {
-// 			return e
-// 		}
-// 		val := body.Val
-// 		state.InsertMessage(val)
-// 		var reply map[string]any = map[string]any{}
-// 		reply["type"] = "add_ok"
-// 		return node.Reply(msg, reply)
-//
-// 	}
-// }
-
-func handleRead(node *maelstrom.Node) maelstrom.HandlerFunc {
-	return func(msg maelstrom.Message) error {
-		var body map[string]any
-		e := json.Unmarshal(msg.Body, &body)
-		if e != nil {
-			return e
-		}
-
-		val := gc.Counter
-		body["type"] = "read_ok"
-		body["value"] = val
-		return node.Reply(msg, body)
-
-	}
-}
-
 func handleBroadcast(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		type Body struct {
-			Variant string `json:"type"`
-			Message int    `json:"message"`
+			Variant string       `json:"type"`
+			Message lib.LogEvent `json:"message"`
 		}
 		var body Body
 
@@ -294,13 +234,12 @@ func handleBroadcast(node *maelstrom.Node) maelstrom.HandlerFunc {
 			return err
 		}
 
-		message := body.Message
+		message := &body.Message
 		state.InsertMessage(message)
 		var reply map[string]any = map[string]any{}
 		reply["type"] = "broadcast_ok"
 		return node.Reply(msg, reply)
 	}
-
 }
 
 func handleGenerate(node *maelstrom.Node) maelstrom.HandlerFunc {

@@ -63,24 +63,26 @@ func (store *MessageStoreV2[T]) GetItemsGreaterThan(key int) []*MessageItem[T] {
 	return messages
 }
 
-type NodeState[T any] struct {
+type NodeState struct {
 	msgLock            *sync.RWMutex
-	MessageStoreV2     *MessageStoreV2[T]
+	MessageStoreV2     *MessageStoreV2[*LogEvent]
 	nodeId             string
 	node               *maelstrom.Node
 	OtherNodesMetaInfo map[string]*NodeMetaInfo
 	NodesMetaInfoLock  *sync.RWMutex
 	otherNodes         []string
-	notifyWhenNewMsgs  chan T
+	notifyWhenNewMsgs  chan *LogEvent
 	linKV              *maelstrom.KV
-	Logs               *ThreadSafeMap[string, *KafkaLog[T]]
+	Broker             *Broker //TODO: refactor this out of the nodestate
 }
 
-func NewNodeState[T any](node *maelstrom.Node) *NodeState[T] {
-	store := &MessageStoreV2[T]{MessageMap: make(map[string]*MessageItem[T]), messages: NewAVLTRee[*MessageItem[T]]()}
-	self := &NodeState[T]{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{},
-		MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan T, 200),
-		linKV: maelstrom.NewLinKV(node), Logs: NewThreadSafeMap[string, *KafkaLog[T]]()}
+func NewNodeState(node *maelstrom.Node) *NodeState {
+	store := &MessageStoreV2[*LogEvent]{MessageMap: make(map[string]*MessageItem[*LogEvent]), messages: NewAVLTRee[*MessageItem[*LogEvent]]()}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{},
+		MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan *LogEvent, 200),
+		linKV: maelstrom.NewLinKV(node)}
+	broker := NewBroker(self.notifyWhenNewMsgs, self)
+	self.Broker = broker
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -96,7 +98,7 @@ func NewNodeState[T any](node *maelstrom.Node) *NodeState[T] {
 	// go self.BackgroundSync() //TODO: for multi-node kafka workload, we will start the BackgroundSync
 	return self
 }
-func (self *NodeState[T]) InsertMessageItems(messages []*MessageItem[T]) (time.Time, error) {
+func (self *NodeState) InsertMessageItems(messages []*MessageItem[*LogEvent]) (time.Time, error) {
 	if messages == nil {
 		return time.Now(), errors.New("messages found nil")
 	}
@@ -119,7 +121,7 @@ func (self *NodeState[T]) InsertMessageItems(messages []*MessageItem[T]) (time.T
 	return lastSync, nil
 }
 
-func (self *NodeState[T]) InsertMessage(message T) {
+func (self *NodeState) InsertMessage(message *LogEvent) {
 	self.msgLock.Lock()
 	defer self.msgLock.Unlock()
 	msg := newMessageItem(message)
@@ -128,7 +130,16 @@ func (self *NodeState[T]) InsertMessage(message T) {
 	}
 }
 
-func (self *NodeState[T]) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[T] {
+// NOTE: purpose of this method is to put the items in the store, so that those could be synced to the
+// other nodes, but not get "notification" for this item.
+func (self *NodeState) InsertMessageWithoutSendingEvent(message *LogEvent) bool {
+	self.msgLock.Lock()
+	defer self.msgLock.Unlock()
+	msg := newMessageItem(message)
+	return self.MessageStoreV2.insertMessageItem(msg)
+}
+
+func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[*LogEvent] {
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
 
@@ -136,7 +147,7 @@ func (self *NodeState[T]) GetItemsGreaterThan(lastSync time.Time) []*MessageItem
 	return self.MessageStoreV2.GetItemsGreaterThan(ls)
 }
 
-func (self *NodeState[T]) BackgroundSync() {
+func (self *NodeState) BackgroundSync() {
 	for {
 		nodesToSync := getRandomNodes(self.otherNodes)
 		time.Sleep(100 * time.Millisecond)
@@ -153,7 +164,7 @@ func (self *NodeState[T]) BackgroundSync() {
 				continue
 			}
 
-			body := &GossipSendData[T]{Type: "gossip-send-data", Messages: msgs}
+			body := &GossipSendData[*LogEvent]{Type: "gossip-send-data", Messages: msgs}
 			self.node.Send(nodeToSync, body)
 
 		}
@@ -177,7 +188,7 @@ func getRandomNodes(otherNodes []string) []string {
 
 }
 
-func (self *NodeState[T]) ReadMessages(callback func(messages *MessageStoreV2[T])) {
+func (self *NodeState) ReadMessages(callback func(messages *MessageStoreV2[*LogEvent])) {
 	self.msgLock.RLock()
 	defer self.msgLock.RUnlock()
 	callback(self.MessageStoreV2)

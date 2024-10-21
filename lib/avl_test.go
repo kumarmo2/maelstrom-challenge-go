@@ -3,6 +3,7 @@ package lib
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"testing"
 	"time"
 )
@@ -74,8 +75,23 @@ func TestInorderPrintWithTime(t *testing.T) {
 
 }
 
+func TestUniqueInsertions(t *testing.T) {
+	tree := NewAVLTRee[Int]()
+	tree.InsertItem(Int(2))
+	tree.InsertItem(Int(2))
+	tree.InsertItem(Int(2))
+	tree.InsertItem(Int(2))
+	tree.InsertItem(Int(2))
+	tree.InsertItem(Int(2))
+	tree.InsertItem(Int(2))
+	tree.InsertItem(Int(3))
+	if tree.Len() != 2 {
+		log.Fatalf("tree lenght must be 2 but found %v", tree.Len())
+	}
+}
+
 func TestJsonSerde(t *testing.T) {
-	slice := make([]*MessageItem, 0)
+	slice := make([]*MessageItem[int], 0)
 	msg := newMessageItem(12)
 	slice = append(slice, msg)
 
@@ -86,7 +102,7 @@ func TestJsonSerde(t *testing.T) {
 	t.Logf("marshalled string length: %v", len(s))
 	t.Logf("marshalled string : %v", string(s))
 
-	s2 := make([]*MessageItem, 0)
+	s2 := make([]*MessageItem[int], 0)
 	err = json.Unmarshal(s, &s2)
 	if err != nil {
 		panic(err)

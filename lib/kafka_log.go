@@ -7,25 +7,25 @@ import (
 	"sync"
 )
 
-const ()
+const AppendLogEvent string = "append-log"
 
 type LogEvent struct {
-	eventType int
-	item      *logItem
+	key  string
+	item *LogItem
 }
 
-type KafkaLog[T any] struct {
+type KafkaLog struct {
 	key                 string
-	storage             *AVLTree[*logItem]
+	storage             *AVLTree[*LogItem]
 	lock                *sync.RWMutex
 	incrOffsetBy        int
 	offset              int
 	committedOffset     int
 	committedOffsetLock *sync.RWMutex // TODO: in multi node kafka workload, this lock will be replaced by a linKV
-	ns                  *NodeState[T]
+	ns                  *NodeState
 }
 
-func NewLog[T any](key string, ns *NodeState[T]) *KafkaLog[T] {
+func NewLog(key string, ns *NodeState) *KafkaLog {
 	totalNodes := len(ns.node.NodeIDs())
 	currNode := ns.node.ID()
 	numStr := strings.TrimPrefix(currNode, "n")
@@ -35,25 +35,25 @@ func NewLog[T any](key string, ns *NodeState[T]) *KafkaLog[T] {
 	}
 
 	// TODO: for multi node, we will need to calculate initOffset and incrOffsetBy
-	return &KafkaLog[T]{key: key, storage: NewAVLTRee[*logItem](), lock: &sync.RWMutex{},
+	return &KafkaLog{key: key, storage: NewAVLTRee[*LogItem](), lock: &sync.RWMutex{},
 		offset: i, incrOffsetBy: totalNodes, ns: ns, committedOffsetLock: &sync.RWMutex{}}
 }
 
-func (self *KafkaLog[T]) CommitOffset(offset int) {
+func (self *KafkaLog) CommitOffset(offset int) {
 	self.committedOffsetLock.Lock()
 	defer self.committedOffsetLock.Unlock()
 
 	self.committedOffset = offset
 }
 
-func (self *KafkaLog[T]) GetCommitOffset() int {
+func (self *KafkaLog) GetCommitOffset() int {
 	self.committedOffsetLock.RLock()
 	defer self.committedOffsetLock.RUnlock()
 	return self.committedOffset
 
 }
 
-func (self *KafkaLog[T]) GetAllFrom(offset int) [][]any {
+func (self *KafkaLog) GetAllFrom(offset int) [][]any {
 	self.lock.RLock()
 	defer self.lock.RUnlock()
 	items := self.storage.GetItemsGreaterThanAndIncludingInOrder(offset)
@@ -69,23 +69,23 @@ func (self *KafkaLog[T]) GetAllFrom(offset int) [][]any {
 	return result
 }
 
-func (log *KafkaLog[T]) Append(msg any) int {
+func (log *KafkaLog) Append(msg any) int {
 	log.lock.Lock()
 	defer log.lock.Unlock()
 
 	log.offset += log.incrOffsetBy
 
-	item := &logItem{msg: msg, offset: log.offset}
+	item := &LogItem{msg: msg, offset: log.offset}
 	log.storage.InsertItem(item)
 
 	return log.offset
 }
 
-type logItem struct {
+type LogItem struct {
 	offset int
 	msg    any
 }
 
-func (self *logItem) Key() int {
+func (self *LogItem) Key() int {
 	return self.offset
 }

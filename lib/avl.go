@@ -27,7 +27,17 @@ func NewAVLTRee[T AVLKey]() *AVLTree[T] {
 
 func (self *AVLTree[T]) InsertItem(item T) {
 	self.root = self.insertItemBinarySearch(self.root, item)
-	// log.Printf("inserted,, is root nil: %v\n", self.root == nil)
+}
+
+func (self *AVLTree[T]) Len() int {
+	return self.lenRecursive(self.root)
+}
+
+func (self *AVLTree[T]) lenRecursive(node *AVLNode[T]) int {
+	if node == nil {
+		return 0
+	}
+	return self.lenRecursive(node.left) + self.lenRecursive(node.right) + 1
 }
 
 func height[T AVLKey](node *AVLNode[T]) int {
@@ -37,9 +47,12 @@ func height[T AVLKey](node *AVLNode[T]) int {
 	return node.height
 }
 
+// NOTE: we will only have unique "keys" in the tree.
 func (self *AVLTree[T]) insertItemBinarySearch(node *AVLNode[T], item T) *AVLNode[T] {
 	if node == nil {
 		node = newAVLNode(item)
+	} else if item.Key() == node.item.Key() {
+		return node
 	} else if item.Key() <= node.item.Key() {
 		node.left = self.insertItemBinarySearch(node.left, item)
 		if height(node.left)-height(node.right) == 2 {
