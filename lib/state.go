@@ -72,11 +72,15 @@ type NodeState struct {
 	NodesMetaInfoLock  *sync.RWMutex
 	otherNodes         []string
 	notifyWhenNewMsgs  chan int
+	linKV              *maelstrom.KV
+	Logs               *ThreadSafeMap[string, *KafkaLog]
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	store := &MessageStoreV2[int]{MessageMap: make(map[string]*MessageItem[int]), messages: NewAVLTRee[*MessageItem[int]]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{}, MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan int, 200)}
+	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{},
+		MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan int, 200),
+		linKV: maelstrom.NewLinKV(node), Logs: NewThreadSafeMap[string, *KafkaLog]()}
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
@@ -89,7 +93,7 @@ func NewNodeState(node *maelstrom.Node) *NodeState {
 			self.otherNodes = append(self.otherNodes, n)
 		}
 	}
-	go self.BackgroundSync()
+	// go self.BackgroundSync() //TODO: for multi-node kafka workload, we will start the BackgroundSync
 	return self
 }
 func (self *NodeState) InsertMessageItems(messages []*MessageItem[int]) (time.Time, error) {

@@ -143,6 +143,32 @@ func (tree *AVLTree[T]) GetItemsGreaterThanInOrder(key int) []T {
 	return result
 }
 
+// TODO: add unit test
+func (tree *AVLTree[T]) GetItemsGreaterThanAndIncludingInOrder(key int) []T {
+	result := make([]T, 0)
+	result = tree.getItemsGreaterAndIncludingThanInorder(tree.root, key, result)
+	return result
+}
+
+func (tree *AVLTree[T]) getItemsGreaterAndIncludingThanInorder(node *AVLNode[T], key int, slice []T) []T {
+	if node == nil {
+		return slice
+	}
+	// fmt.Printf("node.item.key: %v, key: %v\n", node.item.Key(), key)
+	if node.item.Key() < key {
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.right, key, slice)
+	} else if node.item.Key() > key {
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.left, key, slice)
+		slice = append(slice, node.item)
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.right, key, slice)
+	} else {
+		slice = append(slice, node.item)
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.right, key, slice)
+	}
+	return slice
+
+}
+
 func (tree *AVLTree[T]) getItemsGreaterThanInorder(node *AVLNode[T], key int, slice []T) []T {
 	if node == nil {
 		return slice

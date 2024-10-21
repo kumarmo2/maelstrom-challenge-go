@@ -25,6 +25,10 @@ func main() {
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("read", handlerGenerator(node, handleRead))
 	node.Handle("add", handlerGenerator(node, handleAdd))
+	node.Handle("send", handlerGenerator(node, handleSend))
+	node.Handle("poll", handlerGenerator(node, handlePoll))
+	node.Handle("commit_offsets", handlerGenerator(node, handleCommitOffset))
+	node.Handle("list_committed_offsets", handlerGenerator(node, handleListOffsets))
 	node.Handle("broadcast", handlerGenerator(node, handleBroadcast))
 	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 	node.Handle("topology", handlerGenerator(node, handleTopology))
@@ -106,9 +110,8 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 			return err
 		}
 		state = lib.NewNodeState(node)
-		gc = lib.NewGlobalGCV2(state)
-		gc.Start()
-
+		// gc = lib.NewGlobalGCV2(state)
+		// gc.Start()
 		return nil
 
 	}
@@ -122,6 +125,127 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 		return node.Reply(msg, body)
 	}
 }
+
+func handleListOffsets(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		type Body struct {
+			Variant string   `json:"type"`
+			Keys    []string `json:"keys"`
+		}
+
+		var body Body
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
+		}
+
+		result := make(map[string]int)
+
+		for _, k := range body.Keys {
+			logFunc := func() *lib.KafkaLog {
+				return lib.NewLog(k, state)
+			}
+			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
+			offset := log.GetCommitOffset()
+			result[k] = offset
+		}
+
+		b := make(map[string]any)
+		b["type"] = "list_committed_offsets_ok"
+		b["offsets"] = result
+
+		return node.Reply(msg, b)
+	}
+}
+
+func handleCommitOffset(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		type Body struct {
+			Variant string         `json:"type"`
+			Offsets map[string]int `json:"offsets"`
+		}
+
+		var body Body
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
+		}
+
+		for k, v := range body.Offsets {
+			logFunc := func() *lib.KafkaLog {
+				return lib.NewLog(k, state)
+			}
+			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
+			log.CommitOffset(v)
+		}
+
+		result := make(map[string]any)
+		result["type"] = "commit_offsets_ok"
+
+		return node.Reply(msg, result)
+	}
+}
+
+func handlePoll(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		type Body struct {
+			Variant string         `json:"type"`
+			Offsets map[string]int `json:"offsets"`
+		}
+
+		var body Body
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
+		}
+
+		result := make(map[string][][]any)
+
+		for k, v := range body.Offsets {
+			logFunc := func() *lib.KafkaLog {
+				return lib.NewLog(k, state)
+			}
+
+			log := state.Logs.GetOrCreateAndThenGet(k, logFunc)
+			// NOTE: we should be able to parallelize this.
+			items := log.GetAllFrom(v)
+			result[k] = items
+		}
+
+		b := make(map[string]any)
+		b["type"] = "poll_ok"
+		b["msgs"] = result
+		return node.Reply(msg, b)
+	}
+}
+
+func handleSend(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		type Body struct {
+			Variant string `json:"type"`
+			Key     string `json:"key"`
+			Msg     any    `json:"msg"`
+		}
+		var body Body
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
+		}
+
+		logFunc := func() *lib.KafkaLog {
+			return lib.NewLog(body.Key, state)
+		}
+
+		log := state.Logs.GetOrCreateAndThenGet(body.Key, logFunc)
+		offset := log.Append(body.Msg)
+
+		var reply map[string]any = map[string]any{}
+		reply["type"] = "send_ok"
+		reply["offset"] = offset
+		return node.Reply(msg, reply)
+	}
+}
+
 func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		type Body struct {
@@ -134,7 +258,6 @@ func handleAdd(node *maelstrom.Node) maelstrom.HandlerFunc {
 			return e
 		}
 		val := body.Val
-		log.Printf("got %v to add: ", val)
 		state.InsertMessage(val)
 		var reply map[string]any = map[string]any{}
 		reply["type"] = "add_ok"
