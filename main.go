@@ -15,7 +15,6 @@ var state *lib.NodeState
 var gc *lib.GlobalGCV2
 
 func main() {
-	log.Println("hello world")
 	node := maelstrom.NewNode()
 
 	node.Handle("init", handlerGenerator(node, handleInit))

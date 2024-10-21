@@ -1,8 +1,17 @@
 package lib
 
 import (
+	"log"
+	"strconv"
+	"strings"
 	"sync"
 )
+
+const ()
+
+type LogEvent struct {
+	eventType int
+}
 
 type KafkaLog struct {
 	key                 string
@@ -16,9 +25,17 @@ type KafkaLog struct {
 }
 
 func NewLog(key string, ns *NodeState) *KafkaLog {
+	totalNodes := len(ns.node.NodeIDs())
+	currNode := ns.node.ID()
+	numStr := strings.TrimPrefix(currNode, "n")
+	i, err := strconv.Atoi(numStr)
+	if err != nil {
+		log.Fatalf("error while converting string to int, currNode: %v, err: %v, ", currNode, err)
+	}
+
 	// TODO: for multi node, we will need to calculate initOffset and incrOffsetBy
 	return &KafkaLog{key: key, storage: NewAVLTRee[*logItem](), lock: &sync.RWMutex{},
-		offset: 0, incrOffsetBy: 1, ns: ns, committedOffsetLock: &sync.RWMutex{}}
+		offset: i, incrOffsetBy: totalNodes, ns: ns, committedOffsetLock: &sync.RWMutex{}}
 }
 
 func (self *KafkaLog) CommitOffset(offset int) {
