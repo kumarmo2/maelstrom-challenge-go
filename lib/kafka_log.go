@@ -68,8 +68,14 @@ func (self *KafkaLog) GetAllFrom(offset int) [][]any {
 
 	return result
 }
+func (log *KafkaLog) SyncLogItem(msg *LogItem) {
+	log.lock.Lock()
+	defer log.lock.Unlock()
+	log.storage.InsertItem(msg)
 
-func (log *KafkaLog) Append(msg any) int {
+}
+
+func (log *KafkaLog) Append(msg any) *LogItem {
 	log.lock.Lock()
 	defer log.lock.Unlock()
 
@@ -77,8 +83,7 @@ func (log *KafkaLog) Append(msg any) int {
 
 	item := &LogItem{msg: msg, offset: log.offset}
 	log.storage.InsertItem(item)
-
-	return log.offset
+	return item
 }
 
 type LogItem struct {

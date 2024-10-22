@@ -95,7 +95,7 @@ func NewNodeState(node *maelstrom.Node) *NodeState {
 			self.otherNodes = append(self.otherNodes, n)
 		}
 	}
-	// go self.BackgroundSync() //TODO: for multi-node kafka workload, we will start the BackgroundSync
+	go self.BackgroundSync() //TODO: for multi-node kafka workload, we will start the BackgroundSync
 	return self
 }
 func (self *NodeState) InsertMessageItems(messages []*MessageItem[*LogEvent]) (time.Time, error) {
@@ -176,7 +176,8 @@ func getRandomNodes(otherNodes []string) []string {
 	n := len(otherNodes)
 	for {
 		len := len(randNodes)
-		if len == 4 {
+		// TODO: we should be dynamically calculating how many nodes we want to sync to in background
+		if len == 1 {
 			return randNodes
 		}
 		node := otherNodes[rand.IntN(n)]
