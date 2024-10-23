@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"errors"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -33,6 +32,7 @@ type NodeMetaInfo struct {
 }
 
 func newMessageItem[T any](msg T) *MessageItem[T] {
+	// TODO: see if we can replace uuid with something that takes less bytes on wire.
 	return &MessageItem[T]{Message: msg, MessageId: uuid.NewString(), Time: time.Now()}
 }
 
@@ -41,8 +41,10 @@ func (message *MessageItem[T]) Key() int {
 }
 
 type MessageStoreV2[T any] struct {
-	MessageMap map[string]*MessageItem[T] // messageId to
-	messages   *AVLTree[*MessageItem[T]]
+	MessageMap         map[string]*MessageItem[T] // messageId to
+	messages           *AVLTree[*MessageItem[T]]
+	OtherNodesMetaInfo map[string]*NodeMetaInfo
+	NodesMetaInfoLock  *sync.RWMutex
 }
 
 func (self *MessageStoreV2[T]) insertMessageItem(message *MessageItem[T]) bool {
@@ -64,111 +66,34 @@ func (store *MessageStoreV2[T]) GetItemsGreaterThan(key int) []*MessageItem[T] {
 }
 
 type NodeState struct {
-	msgLock            *sync.RWMutex
-	MessageStoreV2     *MessageStoreV2[*LogEvent]
-	nodeId             string
-	node               *maelstrom.Node
-	OtherNodesMetaInfo map[string]*NodeMetaInfo
-	NodesMetaInfoLock  *sync.RWMutex
-	otherNodes         []string
-	notifyWhenNewMsgs  chan *LogEvent
-	linKV              *maelstrom.KV
-	Broker             *Broker //TODO: refactor this out of the nodestate
+	// msgLock           *sync.RWMutex
+	// MessageStoreV2    *MessageStoreV2[*LogEvent]
+	nodeId     string
+	node       *maelstrom.Node
+	otherNodes []string
+	// notifyWhenNewMsgs chan *LogEvent
+	linKV  *maelstrom.KV
+	Broker *Broker //TODO: refactor this out of the nodestate
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
-	store := &MessageStoreV2[*LogEvent]{MessageMap: make(map[string]*MessageItem[*LogEvent]), messages: NewAVLTRee[*MessageItem[*LogEvent]]()}
-	self := &NodeState{msgLock: &sync.RWMutex{}, NodesMetaInfoLock: &sync.RWMutex{},
-		MessageStoreV2: store, node: node, notifyWhenNewMsgs: make(chan *LogEvent, 200),
-		linKV: maelstrom.NewLinKV(node)}
-	broker := NewBroker(self.notifyWhenNewMsgs, self)
+	self := &NodeState{node: node, linKV: maelstrom.NewLinKV(node)}
+	broker := NewBroker(self)
 	self.Broker = broker
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 
-	self.OtherNodesMetaInfo = make(map[string]*NodeMetaInfo)
+	// self.OtherNodesMetaInfo = make(map[string]*NodeMetaInfo)
 	self.otherNodes = make([]string, 0)
 
 	for _, n := range allNodes {
 		if n != self.nodeId {
-			self.OtherNodesMetaInfo[n] = &NodeMetaInfo{name: n, LastSync: time.Now().AddDate(0, 0, -1)}
+			// self.MessageStoreV2.OtherNodesMetaInfo[n] = &NodeMetaInfo{name: n, LastSync: time.Now().AddDate(0, 0, -1)}
 			self.otherNodes = append(self.otherNodes, n)
 		}
 	}
-	go self.BackgroundSync() //TODO: for multi-node kafka workload, we will start the BackgroundSync
+	// go self.BackgroundSync() //TODO: for multi-node kafka workload, we will start the BackgroundSync
 	return self
-}
-func (self *NodeState) InsertMessageItems(messages []*MessageItem[*LogEvent]) (time.Time, error) {
-	if messages == nil {
-		return time.Now(), errors.New("messages found nil")
-	}
-	if len(messages) == 0 {
-		return time.Now(), errors.New("empty messages found")
-	}
-	self.msgLock.Lock()
-	defer self.msgLock.Unlock()
-
-	lastSync := messages[0].Time
-
-	for _, msg := range messages {
-		if self.MessageStoreV2.insertMessageItem(msg) {
-			self.notifyWhenNewMsgs <- msg.Message
-		}
-		if msg.Time.UnixMilli() >= lastSync.UnixMilli() {
-			lastSync = msg.Time
-		}
-	}
-	return lastSync, nil
-}
-
-func (self *NodeState) InsertMessage(message *LogEvent) {
-	self.msgLock.Lock()
-	defer self.msgLock.Unlock()
-	msg := newMessageItem(message)
-	if self.MessageStoreV2.insertMessageItem(msg) {
-		self.notifyWhenNewMsgs <- msg.Message
-	}
-}
-
-// NOTE: purpose of this method is to put the items in the store, so that those could be synced to the
-// other nodes, but not get "notification" for this item.
-func (self *NodeState) InsertMessageWithoutSendingEvent(message *LogEvent) bool {
-	self.msgLock.Lock()
-	defer self.msgLock.Unlock()
-	msg := newMessageItem(message)
-	return self.MessageStoreV2.insertMessageItem(msg)
-}
-
-func (self *NodeState) GetItemsGreaterThan(lastSync time.Time) []*MessageItem[*LogEvent] {
-	self.msgLock.RLock()
-	defer self.msgLock.RUnlock()
-
-	ls := int(lastSync.UnixMilli())
-	return self.MessageStoreV2.GetItemsGreaterThan(ls)
-}
-
-func (self *NodeState) BackgroundSync() {
-	for {
-		nodesToSync := getRandomNodes(self.otherNodes)
-		time.Sleep(100 * time.Millisecond)
-
-		for _, nodeToSync := range nodesToSync {
-			self.NodesMetaInfoLock.RLock()
-			nodeMeta, exists := self.OtherNodesMetaInfo[nodeToSync]
-			self.NodesMetaInfoLock.RUnlock()
-			if !exists {
-				continue
-			}
-			msgs := self.GetItemsGreaterThan(nodeMeta.LastSync)
-			if len(msgs) < 1 {
-				continue
-			}
-
-			body := &GossipSendData[*LogEvent]{Type: "gossip-send-data", Messages: msgs}
-			self.node.Send(nodeToSync, body)
-
-		}
-	}
 }
 
 func getRandomNodes(otherNodes []string) []string {
@@ -187,10 +112,4 @@ func getRandomNodes(otherNodes []string) []string {
 		randNodes = append(randNodes, node)
 	}
 
-}
-
-func (self *NodeState) ReadMessages(callback func(messages *MessageStoreV2[*LogEvent])) {
-	self.msgLock.RLock()
-	defer self.msgLock.RUnlock()
-	callback(self.MessageStoreV2)
 }

@@ -1,7 +1,11 @@
 package lib
 
-import ()
-
+// TODO: we should try making the AVLKey generic over K, where K can be of any type "comparable"
+// this will give us the flexibility to use not just int as the "key" type but also string, pointers etc.
+//
+//	type AVLKey[K comparable] interface {
+//		Key() K
+//	}
 type AVLKey interface {
 	Key() int
 }
