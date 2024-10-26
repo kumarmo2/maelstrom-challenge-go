@@ -1,0 +1,20 @@
+ERROR [neovide::renderer::fonts::caching_shaper] Font can't be updated to: FontOptions {
+    normal: [
+        FontDescription {
+            family: "Caskaydia Cove Nerd Font",
+            style: None,
+        },
+    ],
+    italic: None,
+    bold: None,
+    bold_italic: None,
+    features: {},
+    size: 18.666668,
+    width: 0.0,
+    hinting: Full,
+    edging: AntiAlias,
+}
+Following fonts couldn't be loaded: FontKey { font_desc: Some(FontDescription { family: "Caskaydia Cove Nerd Font", style: Some("Bold Italic") }), hinting: Full, edging: AntiAlias },
+FontKey { font_desc: Some(FontDescription { family: "Caskaydia Cove Nerd Font", style: Some("Bold") }), hinting: Full, edging: AntiAlias },
+FontKey { font_desc: Some(FontDescription { family: "Caskaydia Cove Nerd Font", style: Some("Italic") }), hinting: Full, edging: AntiAlias },
+FontKey { font_desc: Some(FontDescription { family: "Caskaydia Cove Nerd Font", style: None }), hinting: Full, edging: AntiAlias }

@@ -19,9 +19,19 @@ type ThreadSafeMap[T comparable, V any] struct {
 func NewThreadSafeMap[T comparable, V any]() *ThreadSafeMap[T, V] {
 	return &ThreadSafeMap[T, V]{mutexForCheckingExistence: &sync.RWMutex{}, inner: make(map[T]V), mutexForUpdating: &sync.RWMutex{}}
 }
+
+func (m *ThreadSafeMap[T, V]) ExposeInner() map[T]V {
+	return m.inner
+}
+func (m *ThreadSafeMap[T, V]) Set(key T, val V) {
+	m.mutexForUpdating.Lock()
+	defer m.mutexForUpdating.Unlock()
+	m.inner[key] = val
+}
+
 func (m *ThreadSafeMap[T, V]) Get(key T) (V, bool) {
-	m.mutexForCheckingExistence.Lock()
-	defer m.mutexForCheckingExistence.Unlock()
+	m.mutexForUpdating.Lock()
+	defer m.mutexForUpdating.Unlock()
 	v, exists := m.inner[key]
 	return v, exists
 }

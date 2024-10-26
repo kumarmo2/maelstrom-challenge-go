@@ -99,16 +99,43 @@ func (self *Broker) Append(key string, msg any) int {
 
 func (self *Broker) CommitOffset(key string, offset int) {
 	log := self.logs.GetOrCreateAndThenGet(key, generateFuncForKafkaLog(key, self.ns))
-	log.CommitOffset(offset)
+
+	if log.IsLeader() {
+		log.CommitOffset(offset)
+	} else {
+		var b *CustomMessage[map[string]int] = &CustomMessage[map[string]int]{
+			Type: "commit_offsets",
+			Body: map[string]int{key: offset}}
+
+		ch := make(chan bool, 1)
+		handler := func(msg maelstrom.Message) error {
+			ch <- true
+			return nil
+		}
+		self.ns.node.RPC(log.ownerNodeId, b, handler)
+		<-ch
+	}
 }
 
 func (self *Broker) GetCommitOffset(key string) int {
-	otherNodesCounter := len(self.ns.otherNodes)
-	if otherNodesCounter > 1 {
-
-	}
 	log := self.logs.GetOrCreateAndThenGet(key, generateFuncForKafkaLog(key, self.ns))
-	return log.GetCommitOffset()
+	if log.IsLeader() {
+		return log.GetCommitOffset()
+	} else {
+		var b *CustomMessage[string] = &CustomMessage[string]{Type: "get_committed_offset", Body: key}
+		ch := make(chan int, 1)
+		handler := func(msg maelstrom.Message) error {
+			var body CustomMessage[int]
+			err := json.Unmarshal(msg.Body, &body)
+			if err != nil {
+				return err
+			}
+			ch <- body.Body
+			return nil
+		}
+		self.ns.node.RPC(log.ownerNodeId, b, handler)
+		return <-ch
+	}
 }
 
 func (self *Broker) GetAllFrom(key string, offset int) [][]any {

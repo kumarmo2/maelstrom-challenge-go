@@ -66,16 +66,26 @@ func NewLog(key string, ns *NodeState, ownerNodeId string) *KafkaLog {
 }
 
 func (self *KafkaLog) CommitOffset(offset int) {
+	if !self.IsLeader() {
+		log.Fatalf("KafkaLog.CommitOffset: node %v, is not the leader of the log: %v", self.ns.node.ID(), self.key)
+	}
 	self.committedOffsetLock.Lock()
 	defer self.committedOffsetLock.Unlock()
 
 	self.committedOffset = offset
+
+	log.Printf("KafkaLog.CommitOffset: key: %v, committing offset: %v", self.key, self.committedOffset)
 }
 
 func (self *KafkaLog) GetCommitOffset() int {
+	if !self.IsLeader() {
+		log.Fatalf("KafkaLog.GetCommitOffset: node %v, is not the leader of the log: %v", self.ns.node.ID(), self.key)
+	}
 	self.committedOffsetLock.RLock()
 	defer self.committedOffsetLock.RUnlock()
-	return self.committedOffset
+	res := self.committedOffset
+	log.Printf("KafkaLog.GetCommitOffset: key: %v, returning offsetf: %v ", self.key, res)
+	return res
 
 }
 
@@ -112,34 +122,34 @@ func (self *KafkaLog) BackgroundSync() {
 		log.Fatalf(e)
 	}
 	go func() {
-		time.Sleep(time.Millisecond * 100)
-		for _, node := range self.ns.otherNodes {
-			syncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(node, generateFuncForLogSyncInfo(node))
-			self.lock.RLock()
-			syncInfo.lock.RLock()
-			unSyncedMesages := self.storage.messages.GetItemsGreaterThanInOrder(syncInfo.lastSyncOffset)
-			syncInfo.lock.RUnlock()
-			self.lock.RUnlock()
-			if len(unSyncedMesages) < 1 {
-				continue
+		for {
+			time.Sleep(time.Millisecond * 50)
+			for _, node := range self.ns.otherNodes {
+				syncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(node, generateFuncForLogSyncInfo(node))
+				self.lock.RLock()
+				syncInfo.lock.RLock()
+				unSyncedMesages := self.storage.messages.GetItemsGreaterThanInOrder(syncInfo.lastSyncOffset)
+				syncInfo.lock.RUnlock()
+				self.lock.RUnlock()
+				if len(unSyncedMesages) < 1 {
+					continue
+				}
+				msgs, err := json.Marshal(unSyncedMesages)
+				if err != nil {
+					panic(err)
+				}
+				body := LogEvent{
+					Key:       self.key,
+					EventType: AppendLogEvent,
+					Msg:       msgs,
+				}
+				var req *CustomMessage[*LogEvent] = &CustomMessage[*LogEvent]{
+					Type: "log-event",
+					Body: &body,
+				}
+				self.ns.node.Send(node, req)
 			}
-			msgs, err := json.Marshal(unSyncedMesages)
-			if err != nil {
-				panic(err)
-			}
-			body := LogEvent{
-				Key:       self.key,
-				EventType: AppendLogEvent,
-				Msg:       msgs,
-			}
-			var req *CustomMessage[*LogEvent] = &CustomMessage[*LogEvent]{
-				Type: "log-event",
-				Body: &body,
-			}
-
-			self.ns.node.Send(node, req)
 		}
-
 	}()
 }
 
@@ -151,6 +161,7 @@ func (self *KafkaLog) HandleLogEvent(event *LogEvent) error {
 		return errors.New(fmt.Sprint("key doesn't match for the log event "))
 	}
 	if event.EventType == AppendLogEvent {
+		log.Printf("!!! got AppendLogEvent for key: %v", self.key)
 		var reqBody []*LogItem
 		err := json.Unmarshal(event.Msg, &reqBody)
 		if err != nil {
@@ -166,11 +177,13 @@ func (self *KafkaLog) HandleLogEvent(event *LogEvent) error {
 }
 
 func (self *KafkaLog) HandleLogSyncAck(req *LogSyncAck) error {
+	log.Printf(">>> KafkaLog.HandleLogSyncAck: for logf: %v, got the log sync event, req.offsetf; %v", self.key, req.Offset)
 	// TODO: add validations
 	nodeSyncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(req.Follower, generateFuncForLogSyncInfo(req.Follower))
 	nodeSyncInfo.lock.Lock()
 	defer nodeSyncInfo.lock.Unlock()
 	if req.Offset > nodeSyncInfo.lastSyncOffset {
+		log.Printf(">>> KafkaLog.HandleLogSyncAck: for logf: %v, updating the offset, req.offsetf; %v", self.key, req.Offset)
 		nodeSyncInfo.lastSyncOffset = req.Offset
 	}
 	return nil
@@ -187,6 +200,7 @@ func (self *KafkaLog) SyncLogItems(msgs []*LogItem) error {
 		self.storage.messages.InsertItem(msg)
 		if self.offset < msg.Offset {
 			self.offset = msg.Offset
+			log.Printf("!!!, SyncLogItems, for key: %v, syncing the offset to %v ", self.key, self.offset)
 		}
 	}
 	req := &CustomMessage[*LogSyncAck]{

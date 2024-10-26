@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sync"
 
 	"github.com/google/uuid"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
@@ -24,6 +25,7 @@ func main() {
 	node.Handle("poll", handlerGenerator(node, handlePoll))
 	node.Handle("commit_offsets", handlerGenerator(node, handleCommitOffset))
 	node.Handle("list_committed_offsets", handlerGenerator(node, handleListOffsets))
+	node.Handle("get_committed_offset", handlerGenerator(node, handleGetOffset))
 	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 	node.Handle("topology", handlerGenerator(node, handleTopology))
 
@@ -43,30 +45,6 @@ func noOp(node *maelstrom.Node) maelstrom.HandlerFunc {
 func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstrom.HandlerFunc) maelstrom.HandlerFunc {
 	return h(node)
 }
-
-//	func handleGossipSendDataAck(node *maelstrom.Node) maelstrom.HandlerFunc {
-//		return func(msg maelstrom.Message) error {
-//
-//			var body lib.GossipSendDataAck
-//
-//			if err := json.Unmarshal(msg.Body, &body); err != nil {
-//				return err
-//			}
-//
-//			src := msg.Src
-//			state.MessageStoreV2.NodesMetaInfoLock.Lock()
-//			defer state.MessageStoreV2.NodesMetaInfoLock.Unlock()
-//
-//			srcNodeMeta, exists := state.MessageStoreV2.OtherNodesMetaInfo[src]
-//			if !exists {
-//				return errors.New(fmt.Sprintf("src node: %v, does not exists", src))
-//			}
-//			if body.LastSync.UnixMilli() > srcNodeMeta.LastSync.UnixMilli() {
-//				srcNodeMeta.LastSync = body.LastSync
-//			}
-//			return node.Reply(msg, map[string]any{})
-//		}
-//	}
 
 func handleKafkaLogSyncAck(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
@@ -93,38 +71,6 @@ func handleKafkaLogEvent(node *maelstrom.Node) maelstrom.HandlerFunc {
 	}
 }
 
-// func handleGossipSendData(node *maelstrom.Node) maelstrom.HandlerFunc {
-// 	return func(msg maelstrom.Message) error {
-// 		// TODO: we should design this so that if we want to "gossip any data, we don't need to change the Type of the
-// 		// lib.GossipSendData struct.
-// 		var body lib.GossipSendData[*lib.LogEvent]
-// 		if err := json.Unmarshal(msg.Body, &body); err != nil {
-// 			return nil
-// 		}
-//
-// 		if body.Messages == nil {
-// 			log.Println("in handleGossipSendData, received null messages")
-// 			return nil
-// 		}
-//
-// 		if len(body.Messages) == 0 {
-// 			log.Println("handleGossipSendData: zero messages found, returning")
-// 			return nil
-// 		}
-//
-// 		// NOTE: ideally these messages should be ordered by time
-//
-// 		lastSync, err := state.InsertMessageItems(body.Messages)
-// 		if err != nil {
-// 			log.Printf("error: %v\n", err)
-// 			return err
-// 		}
-// 		response := lib.GossipSendDataAck{LastSync: lastSync, Type: "gossip-send-data-ack"}
-//
-// 		return node.RPC(msg.Src, response, func(msg maelstrom.Message) error { return nil })
-// 	}
-// }
-
 func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		var body maelstrom.InitMessageBody
@@ -146,6 +92,20 @@ func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
 	}
 }
 
+func handleGetOffset(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		var body *lib.CustomMessage[string]
+		e := json.Unmarshal(msg.Body, &body)
+		if e != nil {
+			return e
+		}
+		key := body.Body
+		offset := broker.GetCommitOffset(key)
+		res := &lib.CustomMessage[int]{Body: offset, Type: "get_committed_offset_ok"}
+		return node.Reply(msg, res)
+	}
+}
+
 func handleListOffsets(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		type Body struct {
@@ -158,17 +118,23 @@ func handleListOffsets(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if e != nil {
 			return e
 		}
-
-		result := make(map[string]int)
+		result := lib.NewThreadSafeMap[string, int]()
+		wg := &sync.WaitGroup{}
 
 		for _, k := range body.Keys {
-			offset := broker.GetCommitOffset(k)
-			result[k] = offset
+			wg.Add(1)
+			go func() {
+				offset := broker.GetCommitOffset(k)
+				result.Set(k, offset)
+				wg.Done()
+
+			}()
 		}
+		wg.Wait()
 
 		b := make(map[string]any)
 		b["type"] = "list_committed_offsets_ok"
-		b["offsets"] = result
+		b["offsets"] = result.ExposeInner()
 
 		return node.Reply(msg, b)
 	}
@@ -186,10 +152,16 @@ func handleCommitOffset(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if e != nil {
 			return e
 		}
+		wg := &sync.WaitGroup{}
 
 		for k, v := range body.Offsets {
-			broker.CommitOffset(k, v)
+			wg.Add(1)
+			go func() {
+				broker.CommitOffset(k, v)
+				wg.Done()
+			}()
 		}
+		wg.Wait()
 
 		result := make(map[string]any)
 		result["type"] = "commit_offsets_ok"
