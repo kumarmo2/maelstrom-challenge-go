@@ -1,30 +1,39 @@
 package lib
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-const AppendLogEvent string = "append-log"
-
-type Log struct {
-}
+const AppendLogEvent string = "append-log-event"
 
 type LogEvent struct {
-	Key       string   `json:"key"`
-	Item      *LogItem `json:"item"`
-	EventType string   `json:"event_type"`
+	Key       string          `json:"key"`
+	EventType string          `json:"event_type"`
+	Msg       json.RawMessage `json:"msg"`
 }
 
 type LogStorage struct {
 	MessageMap map[int]*LogItem
 	messages   *AVLTree2[int, *LogItem]
 }
+type logSyncInfo struct {
+	node           string
+	lock           *sync.RWMutex
+	lastSyncOffset int
+}
 
 type KafkaLog struct {
 	key                 string
+	ownerNodeId         string
 	storage             *LogStorage
 	lock                *sync.RWMutex
 	incrOffsetBy        int
@@ -35,7 +44,7 @@ type KafkaLog struct {
 	nodeSyncInfo        *ThreadSafeMap[string, *logSyncInfo]
 }
 
-func NewLog(key string, ns *NodeState) *KafkaLog {
+func NewLog(key string, ns *NodeState, ownerNodeId string) *KafkaLog {
 	totalNodes := len(ns.node.NodeIDs())
 	currNode := ns.node.ID()
 	numStr := strings.TrimPrefix(currNode, "n")
@@ -47,9 +56,13 @@ func NewLog(key string, ns *NodeState) *KafkaLog {
 	storage := &LogStorage{MessageMap: make(map[int]*LogItem), messages: NewAVL2Tree[int, *LogItem]()}
 
 	// TODO: for multi node, we will need to calculate initOffset and incrOffsetBy
-	return &KafkaLog{key: key, storage: storage, lock: &sync.RWMutex{},
+	log := &KafkaLog{key: key, storage: storage, lock: &sync.RWMutex{},
 		offset: i, incrOffsetBy: totalNodes, ns: ns, committedOffsetLock: &sync.RWMutex{},
-		nodeSyncInfo: NewThreadSafeMap[string, *logSyncInfo]()}
+		nodeSyncInfo: NewThreadSafeMap[string, *logSyncInfo](), ownerNodeId: ownerNodeId}
+	if log.IsLeader() {
+		go log.BackgroundSync()
+	}
+	return log
 }
 
 func (self *KafkaLog) CommitOffset(offset int) {
@@ -74,8 +87,8 @@ func (self *KafkaLog) GetAllFrom(offset int) [][]any {
 
 	for i, v := range items {
 		slice := make([]any, 2)
-		slice[0] = v.offset
-		slice[1] = v.msg
+		slice[0] = v.Offset
+		slice[1] = v.Msg
 		result[i] = slice
 	}
 
@@ -84,55 +97,133 @@ func (self *KafkaLog) GetAllFrom(offset int) [][]any {
 
 func generateFuncForLogSyncInfo(node string) func() *logSyncInfo {
 	return func() *logSyncInfo {
-		return &logSyncInfo{node: node, lastSyncOffset: -1}
-
+		return &logSyncInfo{node: node, lastSyncOffset: -1, lock: &sync.RWMutex{}}
 	}
 
 }
 
-// func (self *KafkaLog) BackgroundSync() {
-//
-// 	go func() {
-// 		time.Sleep(time.Millisecond * 50)
-// 		for _, node := range self.ns.otherNodes {
-// 			syncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(node, generateFuncForLogSyncInfo(node))
-// 			self.lock.RLock()
-// 			unSyncedMesages := self.storage.messages.GetItemsGreaterThanInOrder(syncInfo.lastSyncOffset)
-// 			self.lock.RUnlock()
-// 		}
-//
-// 	}()
-// }
+func (self *KafkaLog) IsLeader() bool {
+	return self.ownerNodeId == self.ns.node.ID()
+}
 
-func (log *KafkaLog) SyncLogItems(msgs []*LogItem) {
+func (self *KafkaLog) BackgroundSync() {
+	if !self.IsLeader() {
+		e := fmt.Sprintf("node: %v is not the leader of the log: %v", self.ns.node.ID(), self.key)
+		log.Fatalf(e)
+	}
+	go func() {
+		time.Sleep(time.Millisecond * 100)
+		for _, node := range self.ns.otherNodes {
+			syncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(node, generateFuncForLogSyncInfo(node))
+			self.lock.RLock()
+			syncInfo.lock.RLock()
+			unSyncedMesages := self.storage.messages.GetItemsGreaterThanInOrder(syncInfo.lastSyncOffset)
+			syncInfo.lock.RUnlock()
+			self.lock.RUnlock()
+			if len(unSyncedMesages) < 1 {
+				continue
+			}
+			msgs, err := json.Marshal(unSyncedMesages)
+			if err != nil {
+				panic(err)
+			}
+			body := LogEvent{
+				Key:       self.key,
+				EventType: AppendLogEvent,
+				Msg:       msgs,
+			}
+			var req *CustomMessage[*LogEvent] = &CustomMessage[*LogEvent]{
+				Type: "log-event",
+				Body: &body,
+			}
+
+			self.ns.node.Send(node, req)
+		}
+
+	}()
+}
+
+func (self *KafkaLog) HandleLogEvent(event *LogEvent) error {
+	if event == nil {
+		return errors.New("event cannot be nil")
+	}
+	if event.Key != self.key {
+		return errors.New(fmt.Sprint("key doesn't match for the log event "))
+	}
+	if event.EventType == AppendLogEvent {
+		var reqBody []*LogItem
+		err := json.Unmarshal(event.Msg, &reqBody)
+		if err != nil {
+			return err
+		}
+		return self.SyncLogItems(reqBody)
+
+	} else {
+		// TODO: change this panic to returning error
+		log.Fatalf("event type: %v, is not handled.", event.EventType)
+	}
+	panic("unreachable")
+}
+
+func (self *KafkaLog) HandleLogSyncAck(req *LogSyncAck) error {
+	// TODO: add validations
+	nodeSyncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(req.Follower, generateFuncForLogSyncInfo(req.Follower))
+	nodeSyncInfo.lock.Lock()
+	defer nodeSyncInfo.lock.Unlock()
+	if req.Offset > nodeSyncInfo.lastSyncOffset {
+		nodeSyncInfo.lastSyncOffset = req.Offset
+	}
+	return nil
+
+}
+
+func (self *KafkaLog) SyncLogItems(msgs []*LogItem) error {
 	if msgs == nil {
-		return
+		return errors.New("msgs cannot be nil")
 	}
 
-	log.lock.Lock()
-	defer log.lock.Unlock()
-
+	self.lock.Lock()
 	for _, msg := range msgs {
-		log.storage.messages.InsertItem(msg)
+		self.storage.messages.InsertItem(msg)
+		if self.offset < msg.Offset {
+			self.offset = msg.Offset
+		}
 	}
+	req := &CustomMessage[*LogSyncAck]{
+		Type: "log-sync-ack",
+		Body: &LogSyncAck{
+			Key:      self.key,
+			Offset:   self.offset,
+			Follower: self.ns.node.ID(),
+		},
+	}
+	self.lock.Unlock()
+	return self.ns.node.RPC(self.ownerNodeId, req, func(msg maelstrom.Message) error { return nil })
 }
 
-func (log *KafkaLog) Append(msg any) *LogItem {
-	log.lock.Lock()
-	defer log.lock.Unlock()
+func (self *KafkaLog) appendLogItem(msg any) *LogItem {
+	self.lock.Lock()
+	defer self.lock.Unlock()
 
-	log.offset += log.incrOffsetBy
+	self.offset += self.incrOffsetBy
 
-	item := &LogItem{msg: msg, offset: log.offset}
-	log.storage.messages.InsertItem(item)
+	item := &LogItem{Msg: msg, Offset: self.offset}
+	self.storage.messages.InsertItem(item)
 	return item
 }
 
+func (self *KafkaLog) Append(msg any) *LogItem {
+	if !self.IsLeader() {
+		log.Fatalf("KafkaLog.Append, node: %v, is not the leader of the log: %v", self.ns.node.ID(), self.key)
+	}
+	return self.appendLogItem(msg)
+}
+
 type LogItem struct {
-	offset int
-	msg    any
+	Offset int `json:"offset"`
+	Msg    any `json:"msg"`
 }
 
 func (self *LogItem) Key() int {
-	return self.offset
+	return self.Offset
 }

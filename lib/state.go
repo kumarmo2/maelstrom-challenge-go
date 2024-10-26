@@ -66,20 +66,14 @@ func (store *MessageStoreV2[T]) GetItemsGreaterThan(key int) []*MessageItem[T] {
 }
 
 type NodeState struct {
-	// msgLock           *sync.RWMutex
-	// MessageStoreV2    *MessageStoreV2[*LogEvent]
 	nodeId     string
 	node       *maelstrom.Node
 	otherNodes []string
-	// notifyWhenNewMsgs chan *LogEvent
-	linKV  *maelstrom.KV
-	Broker *Broker //TODO: refactor this out of the nodestate
+	linKV      *maelstrom.KV
 }
 
 func NewNodeState(node *maelstrom.Node) *NodeState {
 	self := &NodeState{node: node, linKV: maelstrom.NewLinKV(node)}
-	broker := NewBroker(self)
-	self.Broker = broker
 	self.nodeId = node.ID()
 	allNodes := node.NodeIDs()
 

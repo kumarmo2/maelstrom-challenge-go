@@ -10,20 +10,20 @@ import (
 )
 
 var state *lib.NodeState
+var broker *lib.Broker
 
 func main() {
 	node := maelstrom.NewNode()
 
 	node.Handle("init", handlerGenerator(node, handleInit))
-	// node.Handle("gossip-send-data", handlerGenerator(node, handleGossipSendData))
-	// node.Handle("gossip-send-data-ack", handlerGenerator(node, handleGossipSendDataAck))
 	node.Handle("echo", handlerGenerator(node, handleEcho))
 	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("send", handlerGenerator(node, handleSend))
+	node.Handle("log-event", handlerGenerator(node, handleKafkaLogEvent))
+	node.Handle("log-sync-ack", handlerGenerator(node, handleKafkaLogSyncAck))
 	node.Handle("poll", handlerGenerator(node, handlePoll))
 	node.Handle("commit_offsets", handlerGenerator(node, handleCommitOffset))
 	node.Handle("list_committed_offsets", handlerGenerator(node, handleListOffsets))
-	// node.Handle("broadcast", handlerGenerator(node, handleBroadcast))
 	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 	node.Handle("topology", handlerGenerator(node, handleTopology))
 
@@ -67,6 +67,32 @@ func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstr
 //			return node.Reply(msg, map[string]any{})
 //		}
 //	}
+
+func handleKafkaLogSyncAck(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		var event lib.CustomMessage[*lib.LogSyncAck]
+		if err := json.Unmarshal(msg.Body, &event); err != nil {
+			return err
+
+		}
+		if err := broker.HandleLogSyncAck(event.Body); err != nil {
+			return err
+		}
+		return node.Reply(msg, map[string]any{})
+	}
+}
+
+func handleKafkaLogEvent(node *maelstrom.Node) maelstrom.HandlerFunc {
+	return func(msg maelstrom.Message) error {
+		var event lib.CustomMessage[*lib.LogEvent]
+		if err := json.Unmarshal(msg.Body, &event); err != nil {
+			return err
+
+		}
+		return broker.HandleLogEvent(event.Body)
+	}
+}
+
 // func handleGossipSendData(node *maelstrom.Node) maelstrom.HandlerFunc {
 // 	return func(msg maelstrom.Message) error {
 // 		// TODO: we should design this so that if we want to "gossip any data, we don't need to change the Type of the
@@ -106,6 +132,7 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 			return err
 		}
 		state = lib.NewNodeState(node)
+		broker = lib.NewBroker(state)
 		return nil
 	}
 }
@@ -135,7 +162,7 @@ func handleListOffsets(node *maelstrom.Node) maelstrom.HandlerFunc {
 		result := make(map[string]int)
 
 		for _, k := range body.Keys {
-			offset := state.Broker.GetCommitOffset(k)
+			offset := broker.GetCommitOffset(k)
 			result[k] = offset
 		}
 
@@ -161,7 +188,7 @@ func handleCommitOffset(node *maelstrom.Node) maelstrom.HandlerFunc {
 		}
 
 		for k, v := range body.Offsets {
-			state.Broker.CommitOffset(k, v)
+			broker.CommitOffset(k, v)
 		}
 
 		result := make(map[string]any)
@@ -187,7 +214,7 @@ func handlePoll(node *maelstrom.Node) maelstrom.HandlerFunc {
 		result := make(map[string][][]any)
 
 		for k, v := range body.Offsets {
-			items := state.Broker.GetAllFrom(k, v)
+			items := broker.GetAllFrom(k, v)
 			// NOTE: we should be able to parallelize this.
 			result[k] = items
 		}
@@ -201,18 +228,13 @@ func handlePoll(node *maelstrom.Node) maelstrom.HandlerFunc {
 
 func handleSend(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		type Body struct {
-			Variant string `json:"type"`
-			Key     string `json:"key"`
-			Msg     any    `json:"msg"`
-		}
-		var body Body
+		var body lib.SendRequestBody
 		e := json.Unmarshal(msg.Body, &body)
 		if e != nil {
 			return e
 		}
 
-		offset := state.Broker.Append(body.Key, body.Msg)
+		offset := broker.Append(body.Key, body.Msg)
 
 		var reply map[string]any = map[string]any{}
 		reply["type"] = "send_ok"
