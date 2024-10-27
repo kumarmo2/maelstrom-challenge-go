@@ -23,19 +23,12 @@ func main() {
 	node.Handle("commit_offsets", handlerGenerator(node, handleCommitOffset))
 	node.Handle("list_committed_offsets", handlerGenerator(node, handleListOffsets))
 	node.Handle("get_committed_offset", handlerGenerator(node, handleGetOffset))
-	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
 
 	err := node.Run()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-}
-
-func noOp(node *maelstrom.Node) maelstrom.HandlerFunc {
-	return func(msg maelstrom.Message) error {
-		return nil
-	}
 }
 
 func handlerGenerator(node *maelstrom.Node, h func(node *maelstrom.Node) maelstrom.HandlerFunc) maelstrom.HandlerFunc {
