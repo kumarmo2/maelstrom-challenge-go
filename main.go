@@ -5,7 +5,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/google/uuid"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"github.com/kumarmo2/maelstrom-challenge-go/lib"
 )
@@ -17,8 +16,6 @@ func main() {
 	node := maelstrom.NewNode()
 
 	node.Handle("init", handlerGenerator(node, handleInit))
-	node.Handle("echo", handlerGenerator(node, handleEcho))
-	node.Handle("generate", handlerGenerator(node, handleGenerate))
 	node.Handle("send", handlerGenerator(node, handleSend))
 	node.Handle("log-event", handlerGenerator(node, handleKafkaLogEvent))
 	node.Handle("log-sync-ack", handlerGenerator(node, handleKafkaLogSyncAck))
@@ -27,7 +24,6 @@ func main() {
 	node.Handle("list_committed_offsets", handlerGenerator(node, handleListOffsets))
 	node.Handle("get_committed_offset", handlerGenerator(node, handleGetOffset))
 	node.Handle("broadcast_ok", handlerGenerator(node, noOp))
-	node.Handle("topology", handlerGenerator(node, handleTopology))
 
 	err := node.Run()
 	if err != nil {
@@ -83,15 +79,6 @@ func handleInit(node *maelstrom.Node) maelstrom.HandlerFunc {
 	}
 }
 
-func handleTopology(node *maelstrom.Node) maelstrom.HandlerFunc {
-	return func(msg maelstrom.Message) error {
-		// TODO: handle the topology properly.
-		body := make(map[string]any)
-		body["type"] = "topology_ok"
-		return node.Reply(msg, body)
-	}
-}
-
 func handleGetOffset(node *maelstrom.Node) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		var body *lib.CustomMessage[string]
@@ -118,7 +105,7 @@ func handleListOffsets(node *maelstrom.Node) maelstrom.HandlerFunc {
 		if e != nil {
 			return e
 		}
-		result := lib.NewThreadSafeMap[string, int]()
+		result := lib.NewGenericThreadSafeMap[string, int]()
 		wg := &sync.WaitGroup{}
 
 		for _, k := range body.Keys {
@@ -213,57 +200,4 @@ func handleSend(node *maelstrom.Node) maelstrom.HandlerFunc {
 		reply["offset"] = offset
 		return node.Reply(msg, reply)
 	}
-}
-
-// func handleBroadcast(node *maelstrom.Node) maelstrom.HandlerFunc {
-// 	return func(msg maelstrom.Message) error {
-// 		type Body struct {
-// 			Variant string       `json:"type"`
-// 			Message lib.LogEvent `json:"message"`
-// 		}
-// 		var body Body
-//
-// 		err := json.Unmarshal(msg.Body, &body)
-// 		if err != nil {
-// 			return err
-// 		}
-//
-// 		message := &body.Message
-// 		state.InsertMessage(message)
-// 		var reply map[string]any = map[string]any{}
-// 		reply["type"] = "broadcast_ok"
-// 		return node.Reply(msg, reply)
-// 	}
-// }
-
-func handleGenerate(node *maelstrom.Node) maelstrom.HandlerFunc {
-	return func(msg maelstrom.Message) error {
-		var body map[string]any
-
-		err := json.Unmarshal(msg.Body, &body)
-		if err != nil {
-			return err
-		}
-		id := uuid.New()
-
-		body["type"] = "generate_ok"
-		body["id"] = id
-		return node.Reply(msg, body)
-	}
-}
-
-func handleEcho(node *maelstrom.Node) maelstrom.HandlerFunc {
-	return func(msg maelstrom.Message) error {
-
-		var body map[string]any
-
-		err := json.Unmarshal(msg.Body, &body)
-		if err != nil {
-			return nil
-		}
-		body["type"] = "echo_ok"
-		return node.Reply(msg, body)
-
-	}
-
 }

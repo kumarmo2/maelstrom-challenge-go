@@ -2,7 +2,9 @@ package lib
 
 import "sync"
 
-type ThreadSafeMap[T comparable, V any] struct {
+type NicheThreadSafeMap[T comparable, V any] struct {
+	// NOTE: This is a very niche Map that is only meant to be used for `GetOrCreateAndThenGet`.
+
 	// NOTE: the reason for having 2 locks is to reduce the contention on the lock.
 	// `valueGenerator` could take time to actually generate the value(eg: in the case of creation of a kafka log)
 	// if we had a single lock and key doesn't exist, it would have acquired the lock till the valueGenerator returns, which
@@ -16,34 +18,11 @@ type ThreadSafeMap[T comparable, V any] struct {
 	inner                     map[T]V
 }
 
-func NewThreadSafeMap[T comparable, V any]() *ThreadSafeMap[T, V] {
-	return &ThreadSafeMap[T, V]{mutexForCheckingExistence: &sync.RWMutex{}, inner: make(map[T]V), mutexForUpdating: &sync.RWMutex{}}
+func NewNicheThreadSafeMap[T comparable, V any]() *NicheThreadSafeMap[T, V] {
+	return &NicheThreadSafeMap[T, V]{mutexForCheckingExistence: &sync.RWMutex{}, inner: make(map[T]V), mutexForUpdating: &sync.RWMutex{}}
 }
 
-func (m *ThreadSafeMap[T, V]) ExposeInner() map[T]V {
-	return m.inner
-}
-func (m *ThreadSafeMap[T, V]) Set(key T, val V) {
-	m.mutexForUpdating.Lock()
-	defer m.mutexForUpdating.Unlock()
-	m.inner[key] = val
-}
-
-func (m *ThreadSafeMap[T, V]) Get(key T) (V, bool) {
-	m.mutexForUpdating.Lock()
-	defer m.mutexForUpdating.Unlock()
-	v, exists := m.inner[key]
-	return v, exists
-}
-
-func (m *ThreadSafeMap[T, V]) ContainsKey(key T) bool {
-	m.mutexForCheckingExistence.Lock()
-	defer m.mutexForCheckingExistence.Unlock()
-	_, exists := m.inner[key]
-	return exists
-}
-
-func (m *ThreadSafeMap[T, V]) GetOrCreateAndThenGet(key T, valueGenerator func() V) V {
+func (m *NicheThreadSafeMap[T, V]) GetOrCreateAndThenGet(key T, valueGenerator func() V) V {
 	m.mutexForCheckingExistence.Lock()
 	val, exists := m.inner[key]
 	if exists {
@@ -65,4 +44,35 @@ func (m *ThreadSafeMap[T, V]) GetOrCreateAndThenGet(key T, valueGenerator func()
 
 	m.inner[key] = val
 	return val
+}
+
+type GenericThreadSafeMap[K comparable, V any] struct {
+	lock  *sync.RWMutex
+	inner map[K]V
+}
+
+func NewGenericThreadSafeMap[K comparable, V any]() *GenericThreadSafeMap[K, V] {
+	return &GenericThreadSafeMap[K, V]{
+		lock:  &sync.RWMutex{},
+		inner: map[K]V{},
+	}
+}
+
+func (self *GenericThreadSafeMap[K, V]) Get(key K) (v V, exists bool) {
+	self.lock.RLock()
+	defer self.lock.RUnlock()
+	v, exists = self.inner[key]
+	return v, exists
+}
+
+func (self *GenericThreadSafeMap[K, V]) Set(key K, val V) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	self.inner[key] = val
+}
+
+func (self *GenericThreadSafeMap[K, V]) ExposeInner() map[K]V {
+	//NOTE: this must be used very carefully as we are exposing the inner map here.
+	// if any concurrent actions are take on this inner map, its likely to panic.
+	return self.inner
 }

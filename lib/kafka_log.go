@@ -41,7 +41,7 @@ type KafkaLog struct {
 	committedOffset     int
 	committedOffsetLock *sync.RWMutex // TODO: in multi node kafka workload, this lock will be replaced by a linKV
 	ns                  *NodeState
-	nodeSyncInfo        *ThreadSafeMap[string, *logSyncInfo]
+	nodeSyncInfo        *NicheThreadSafeMap[string, *logSyncInfo]
 }
 
 func NewLog(key string, ns *NodeState, ownerNodeId string) *KafkaLog {
@@ -58,7 +58,7 @@ func NewLog(key string, ns *NodeState, ownerNodeId string) *KafkaLog {
 	// TODO: for multi node, we will need to calculate initOffset and incrOffsetBy
 	log := &KafkaLog{key: key, storage: storage, lock: &sync.RWMutex{},
 		offset: i, incrOffsetBy: totalNodes, ns: ns, committedOffsetLock: &sync.RWMutex{},
-		nodeSyncInfo: NewThreadSafeMap[string, *logSyncInfo](), ownerNodeId: ownerNodeId}
+		nodeSyncInfo: NewNicheThreadSafeMap[string, *logSyncInfo](), ownerNodeId: ownerNodeId}
 	if log.IsLeader() {
 		go log.BackgroundSync()
 	}
@@ -74,7 +74,7 @@ func (self *KafkaLog) CommitOffset(offset int) {
 
 	self.committedOffset = offset
 
-	log.Printf("KafkaLog.CommitOffset: key: %v, committing offset: %v", self.key, self.committedOffset)
+	// log.Printf("KafkaLog.CommitOffset: key: %v, committing offset: %v", self.key, self.committedOffset)
 }
 
 func (self *KafkaLog) GetCommitOffset() int {
@@ -84,7 +84,7 @@ func (self *KafkaLog) GetCommitOffset() int {
 	self.committedOffsetLock.RLock()
 	defer self.committedOffsetLock.RUnlock()
 	res := self.committedOffset
-	log.Printf("KafkaLog.GetCommitOffset: key: %v, returning offsetf: %v ", self.key, res)
+	// log.Printf("KafkaLog.GetCommitOffset: key: %v, returning offsetf: %v ", self.key, res)
 	return res
 
 }
@@ -123,7 +123,7 @@ func (self *KafkaLog) BackgroundSync() {
 	}
 	go func() {
 		for {
-			time.Sleep(time.Millisecond * 50)
+			time.Sleep(time.Millisecond * 10)
 			for _, node := range self.ns.otherNodes {
 				syncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(node, generateFuncForLogSyncInfo(node))
 				self.lock.RLock()
@@ -161,7 +161,7 @@ func (self *KafkaLog) HandleLogEvent(event *LogEvent) error {
 		return errors.New(fmt.Sprint("key doesn't match for the log event "))
 	}
 	if event.EventType == AppendLogEvent {
-		log.Printf("!!! got AppendLogEvent for key: %v", self.key)
+		// log.Printf("!!! got AppendLogEvent for key: %v", self.key)
 		var reqBody []*LogItem
 		err := json.Unmarshal(event.Msg, &reqBody)
 		if err != nil {
@@ -177,13 +177,13 @@ func (self *KafkaLog) HandleLogEvent(event *LogEvent) error {
 }
 
 func (self *KafkaLog) HandleLogSyncAck(req *LogSyncAck) error {
-	log.Printf(">>> KafkaLog.HandleLogSyncAck: for logf: %v, got the log sync event, req.offsetf; %v", self.key, req.Offset)
+	// log.Printf(">>> KafkaLog.HandleLogSyncAck: for logf: %v, got the log sync event, req.offsetf; %v", self.key, req.Offset)
 	// TODO: add validations
 	nodeSyncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(req.Follower, generateFuncForLogSyncInfo(req.Follower))
 	nodeSyncInfo.lock.Lock()
 	defer nodeSyncInfo.lock.Unlock()
 	if req.Offset > nodeSyncInfo.lastSyncOffset {
-		log.Printf(">>> KafkaLog.HandleLogSyncAck: for logf: %v, updating the offset, req.offsetf; %v", self.key, req.Offset)
+		// log.Printf(">>> KafkaLog.HandleLogSyncAck: for logf: %v, updating the offset, req.offsetf; %v", self.key, req.Offset)
 		nodeSyncInfo.lastSyncOffset = req.Offset
 	}
 	return nil
@@ -200,7 +200,7 @@ func (self *KafkaLog) SyncLogItems(msgs []*LogItem) error {
 		self.storage.messages.InsertItem(msg)
 		if self.offset < msg.Offset {
 			self.offset = msg.Offset
-			log.Printf("!!!, SyncLogItems, for key: %v, syncing the offset to %v ", self.key, self.offset)
+			// log.Printf("!!!, SyncLogItems, for key: %v, syncing the offset to %v ", self.key, self.offset)
 		}
 	}
 	req := &CustomMessage[*LogSyncAck]{

@@ -12,14 +12,14 @@ import (
 )
 
 type Broker struct {
-	logs     *ThreadSafeMap[string, *KafkaLog]
+	logs     *NicheThreadSafeMap[string, *KafkaLog]
 	ns       *NodeState
-	syncInfo *ThreadSafeMap[string, *logSyncInfo]
+	syncInfo *NicheThreadSafeMap[string, *logSyncInfo]
 }
 
 func NewBroker(ns *NodeState) *Broker {
-	return &Broker{logs: NewThreadSafeMap[string, *KafkaLog](), ns: ns,
-		syncInfo: NewThreadSafeMap[string, *logSyncInfo]()}
+	return &Broker{logs: NewNicheThreadSafeMap[string, *KafkaLog](), ns: ns,
+		syncInfo: NewNicheThreadSafeMap[string, *logSyncInfo]()}
 }
 
 func generateFuncForKafkaLog(key string, ns *NodeState) func() *KafkaLog {
@@ -36,15 +36,12 @@ func generateFuncForKafkaLog(key string, ns *NodeState) func() *KafkaLog {
 		return NewLog(key, ns, node)
 
 	}
-
 }
 
 func (self *Broker) HandleLogSyncAck(req *LogSyncAck) error {
 	key := req.Key
-	l, exists := self.logs.Get(key)
-	if !exists {
-		return errors.New(fmt.Sprintf("Broker.HandleLogSyncAck, node:%v doesn't contain log: %v", self.ns.node.ID(), key))
-	}
+	l := self.logs.GetOrCreateAndThenGet(key, nil) //NOTE: we are passing the nil generator because, this is a method for acknowledging
+	// That should mean that log must have "gossiped" something
 	if !l.IsLeader() {
 		return errors.New(fmt.Sprintf("Broker.HandleLogSyncAck, node:%v is not the leader of log: %v", self.ns.node.ID(), key))
 	}
@@ -54,14 +51,14 @@ func (self *Broker) HandleLogSyncAck(req *LogSyncAck) error {
 func (self *Broker) HandleLogEvent(event *LogEvent) error {
 	if event == nil {
 		e := fmt.Sprintf("HandleLogEvent: event was nil")
-		log.Print(e)
+		// log.Print(e)
 		return errors.New(e)
 	}
 	key := event.Key
 	l := self.logs.GetOrCreateAndThenGet(key, generateFuncForKafkaLog(key, self.ns))
 	if l.IsLeader() {
 		e := fmt.Sprint("Broker.HandleLogEvent: node %v, is the leader of the log:%v ", self.ns.node.ID(), key)
-		log.Print(e)
+		// log.Print(e)
 		return errors.New(e)
 	}
 
