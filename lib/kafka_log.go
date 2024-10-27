@@ -123,7 +123,7 @@ func (self *KafkaLog) BackgroundSync() {
 	}
 	go func() {
 		for {
-			time.Sleep(time.Millisecond * 10)
+			time.Sleep(time.Millisecond * 100)
 			for _, node := range self.ns.otherNodes {
 				syncInfo := self.nodeSyncInfo.GetOrCreateAndThenGet(node, generateFuncForLogSyncInfo(node))
 				self.lock.RLock()

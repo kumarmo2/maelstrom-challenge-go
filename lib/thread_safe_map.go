@@ -13,37 +13,21 @@ type NicheThreadSafeMap[T comparable, V any] struct {
 	// if the key exists or not. and another lock for actually updating. with this, the operations when a key exists will be resolved
 	// faster as the "existence" lock is freed quickly.
 
-	mutexForCheckingExistence *sync.RWMutex
-	mutexForUpdating          *sync.RWMutex
-	inner                     map[T]V
+	inner *sync.Map
 }
 
 func NewNicheThreadSafeMap[T comparable, V any]() *NicheThreadSafeMap[T, V] {
-	return &NicheThreadSafeMap[T, V]{mutexForCheckingExistence: &sync.RWMutex{}, inner: make(map[T]V), mutexForUpdating: &sync.RWMutex{}}
+	return &NicheThreadSafeMap[T, V]{inner: &sync.Map{}}
 }
 
 func (m *NicheThreadSafeMap[T, V]) GetOrCreateAndThenGet(key T, valueGenerator func() V) V {
-	m.mutexForCheckingExistence.Lock()
-	val, exists := m.inner[key]
+	val, exists := m.inner.Load(key)
 	if exists {
-		m.mutexForCheckingExistence.Unlock()
-		return val
+		return val.(V)
 	}
-	m.mutexForCheckingExistence.Unlock()
-	m.mutexForUpdating.Lock()
-	defer m.mutexForUpdating.Unlock()
-
-	//NOTE: checking again for the existence of the key is necessary, because of having the 2 locks, to prevent double writes.
-	// The reason why we need 2 locks is mentioned near the definition  of the ThreadSafeMap.
-
-	val, exists = m.inner[key]
-	if exists {
-		return val
-	}
-	val = valueGenerator() // TODO: if valueGenerator paniced, we should make sure the mutexes are not poisoned.
-
-	m.inner[key] = val
-	return val
+	val = valueGenerator()
+	m.inner.Store(key, val)
+	return val.(V)
 }
 
 type GenericThreadSafeMap[K comparable, V any] struct {
