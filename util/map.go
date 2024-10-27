@@ -1,5 +1,7 @@
 package util
 
+import "fmt"
+
 func ToKeySlice[T comparable, V any](dictionary map[T]V) []T {
 
 	n := len(dictionary)
@@ -24,4 +26,8 @@ func ToValSlice[T comparable, V any](dictionary map[T]V) []V {
 		i++
 	}
 	return slice
+}
+
+func GetLogLeaderKey(logKey string) string {
+	return fmt.Sprintf("log-%v-leader", logKey)
 }

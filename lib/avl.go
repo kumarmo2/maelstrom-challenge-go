@@ -1,7 +1,11 @@
 package lib
 
-import ()
-
+// TODO: we should try making the AVLKey generic over K, where K can be of any type "comparable"
+// this will give us the flexibility to use not just int as the "key" type but also string, pointers etc.
+//
+//	type AVLKey[K comparable] interface {
+//		Key() K
+//	}
 type AVLKey interface {
 	Key() int
 }
@@ -27,7 +31,17 @@ func NewAVLTRee[T AVLKey]() *AVLTree[T] {
 
 func (self *AVLTree[T]) InsertItem(item T) {
 	self.root = self.insertItemBinarySearch(self.root, item)
-	// log.Printf("inserted,, is root nil: %v\n", self.root == nil)
+}
+
+func (self *AVLTree[T]) Len() int {
+	return self.lenRecursive(self.root)
+}
+
+func (self *AVLTree[T]) lenRecursive(node *AVLNode[T]) int {
+	if node == nil {
+		return 0
+	}
+	return self.lenRecursive(node.left) + self.lenRecursive(node.right) + 1
 }
 
 func height[T AVLKey](node *AVLNode[T]) int {
@@ -37,9 +51,12 @@ func height[T AVLKey](node *AVLNode[T]) int {
 	return node.height
 }
 
+// NOTE: we will only have unique "keys" in the tree.
 func (self *AVLTree[T]) insertItemBinarySearch(node *AVLNode[T], item T) *AVLNode[T] {
 	if node == nil {
 		node = newAVLNode(item)
+	} else if item.Key() == node.item.Key() {
+		return node
 	} else if item.Key() <= node.item.Key() {
 		node.left = self.insertItemBinarySearch(node.left, item)
 		if height(node.left)-height(node.right) == 2 {
@@ -141,6 +158,32 @@ func (tree *AVLTree[T]) GetItemsGreaterThanInOrder(key int) []T {
 	result := make([]T, 0)
 	result = tree.getItemsGreaterThanInorder(tree.root, key, result)
 	return result
+}
+
+// TODO: add unit test
+func (tree *AVLTree[T]) GetItemsGreaterThanAndIncludingInOrder(key int) []T {
+	result := make([]T, 0)
+	result = tree.getItemsGreaterAndIncludingThanInorder(tree.root, key, result)
+	return result
+}
+
+func (tree *AVLTree[T]) getItemsGreaterAndIncludingThanInorder(node *AVLNode[T], key int, slice []T) []T {
+	if node == nil {
+		return slice
+	}
+	// fmt.Printf("node.item.key: %v, key: %v\n", node.item.Key(), key)
+	if node.item.Key() < key {
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.right, key, slice)
+	} else if node.item.Key() > key {
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.left, key, slice)
+		slice = append(slice, node.item)
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.right, key, slice)
+	} else {
+		slice = append(slice, node.item)
+		slice = tree.getItemsGreaterAndIncludingThanInorder(node.right, key, slice)
+	}
+	return slice
+
 }
 
 func (tree *AVLTree[T]) getItemsGreaterThanInorder(node *AVLNode[T], key int, slice []T) []T {
